@@ -25,3 +25,5 @@ dist/
 # --- OS / editor noise ---
 .DS_Store
 Thumbs.db
+infra/API_KEYS.txt
+models/onnx/

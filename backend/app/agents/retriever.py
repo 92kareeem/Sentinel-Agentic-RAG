@@ -24,8 +24,15 @@ def _ensure_loaded() -> None:
     global _index, _chunks, _bm25
     if _index is None:
         settings = get_settings()
-        _index, _chunks = faiss_store.load(settings.index_dir)
-        _bm25 = bm25_store.load(settings.index_dir)
+        index_dir = settings.index_dir
+        if settings.use_s3_index:
+            # Lambda: artifacts live in S3; /tmp is the only writable path.
+            # Downloaded once per cold start, reused by every warm invocation.
+            from pathlib import Path
+
+            index_dir = faiss_store.load_from_s3(Path("/tmp/index"))
+        _index, _chunks = faiss_store.load(index_dir)
+        _bm25 = bm25_store.load(index_dir)
 
 
 def retriever_node(state: AgentState) -> AgentState:

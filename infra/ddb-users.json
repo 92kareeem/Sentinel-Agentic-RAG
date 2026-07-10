@@ -1,0 +1,17 @@
+{
+  "TableName": "sentinel-users",
+  "BillingMode": "PAY_PER_REQUEST",
+  "AttributeDefinitions": [
+    { "AttributeName": "user_id", "AttributeType": "S" },
+    { "AttributeName": "api_key_hash", "AttributeType": "S" }
+  ],
+  "KeySchema": [{ "AttributeName": "user_id", "KeyType": "HASH" }],
+  "GlobalSecondaryIndexes": [
+    {
+      "IndexName": "api_key_hash-index",
+      "KeySchema": [{ "AttributeName": "api_key_hash", "KeyType": "HASH" }],
+      "Projection": { "ProjectionType": "ALL" }
+    }
+  ],
+  "Tags": [{ "Key": "Project", "Value": "sentinel" }]
+}

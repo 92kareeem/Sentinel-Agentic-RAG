@@ -1,0 +1,35 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DocsBucketObjects",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject"],
+      "Resource": "arn:aws:s3:::sentinel-docs-440744255230/*"
+    },
+    {
+      "Sid": "DynamoTables",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:Query",
+        "dynamodb:Scan"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:ap-south-1:440744255230:table/sentinel-users",
+        "arn:aws:dynamodb:ap-south-1:440744255230:table/sentinel-users/index/api_key_hash-index",
+        "arn:aws:dynamodb:ap-south-1:440744255230:table/sentinel-quotas",
+        "arn:aws:dynamodb:ap-south-1:440744255230:table/sentinel-traces",
+        "arn:aws:dynamodb:ap-south-1:440744255230:table/sentinel-traces/index/user_id-created_at-index"
+      ]
+    },
+    {
+      "Sid": "Logs",
+      "Effect": "Allow",
+      "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+      "Resource": "arn:aws:logs:ap-south-1:440744255230:log-group:/aws/lambda/sentinel-api:*"
+    }
+  ]
+}

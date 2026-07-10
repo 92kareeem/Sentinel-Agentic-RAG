@@ -1,0 +1,21 @@
+{
+  "TableName": "sentinel-traces",
+  "BillingMode": "PAY_PER_REQUEST",
+  "AttributeDefinitions": [
+    { "AttributeName": "trace_id", "AttributeType": "S" },
+    { "AttributeName": "user_id", "AttributeType": "S" },
+    { "AttributeName": "created_at", "AttributeType": "S" }
+  ],
+  "KeySchema": [{ "AttributeName": "trace_id", "KeyType": "HASH" }],
+  "GlobalSecondaryIndexes": [
+    {
+      "IndexName": "user_id-created_at-index",
+      "KeySchema": [
+        { "AttributeName": "user_id", "KeyType": "HASH" },
+        { "AttributeName": "created_at", "KeyType": "RANGE" }
+      ],
+      "Projection": { "ProjectionType": "ALL" }
+    }
+  ],
+  "Tags": [{ "Key": "Project", "Value": "sentinel" }]
+}

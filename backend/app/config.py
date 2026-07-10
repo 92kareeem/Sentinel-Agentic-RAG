@@ -23,6 +23,10 @@ class Settings(BaseSettings):
 
     # --- RAG / index ---
     embed_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+    # "torch" locally (full sentence-transformers); "onnx" in Lambda (quantized
+    # MiniLM + onnxruntime — same vectors, ~60 MB instead of ~1.5 GB)
+    embed_backend: str = "torch"
+    onnx_model_dir: Path = Path("models/onnx")
     index_dir: Path = Path("index")
     chunk_size_tokens: int = 512
     chunk_overlap_tokens: int = 64

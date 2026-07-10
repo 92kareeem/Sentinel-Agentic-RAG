@@ -1,0 +1,7 @@
+{
+  "TableName": "sentinel-quotas",
+  "BillingMode": "PAY_PER_REQUEST",
+  "AttributeDefinitions": [{ "AttributeName": "quota_key", "AttributeType": "S" }],
+  "KeySchema": [{ "AttributeName": "quota_key", "KeyType": "HASH" }],
+  "Tags": [{ "Key": "Project", "Value": "sentinel" }]
+}

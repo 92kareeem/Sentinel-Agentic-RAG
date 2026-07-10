@@ -1,0 +1,20 @@
+# Sentinel API container for AWS Lambda (linux/amd64), zero-cost edition:
+# no torch — queries are embedded by a quantized ONNX MiniLM (~23 MB model +
+# ~55 MB runtime), keeping the image inside ECR's 500 MB free tier.
+
+FROM public.ecr.aws/lambda/python:3.12
+
+COPY docker/requirements-lambda.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# app code (imported as app.*) and the baked embedding model
+COPY backend/app ${LAMBDA_TASK_ROOT}/app
+COPY models/onnx /opt/onnx
+
+ENV EMBED_BACKEND=onnx \
+    ONNX_MODEL_DIR=/opt/onnx \
+    LOCAL_MODE=false \
+    USE_S3_INDEX=true \
+    INDEX_DIR=/tmp/index
+
+CMD ["app.main.handler"]
