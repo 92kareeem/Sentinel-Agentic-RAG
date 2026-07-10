@@ -13,7 +13,10 @@ hybrid FAISS+BM25 retrieval, Groq LLMs, critic/repair loop, full request tracing
 
 ## Quickstart (local)
 ```bash
-python -m venv .venv && make install   # Python 3.12 required
+# venv must live OUTSIDE cloud-synced folders (OneDrive corrupts native DLLs)
+# and be built from a standalone CPython (conda-derived venvs break torch DLL init).
+uv venv C:/venvs/sentinel --python 3.12
+uv pip install -e ".[dev]" --python C:/venvs/sentinel/Scripts/python.exe
 cp .env.example .env                   # fill GROQ_API_KEY
 make ingest                            # build index/ from ./docs, runs smoke test
 make test

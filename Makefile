@@ -1,10 +1,12 @@
 # Sentinel task runner. Run from Git Bash on Windows: `make install`, `make ingest`, ...
-# Venv lives INSIDE the project (.venv). Windows venvs put python under Scripts/.
+# Venv lives OUTSIDE OneDrive on Windows (OneDrive sync corrupts/locks native DLLs like
+# torch's c10.dll). Override with: make VENV=/path/to/venv <target>
 
-VENV := .venv
 ifeq ($(OS),Windows_NT)
+VENV ?= C:/venvs/sentinel
 PY := $(VENV)/Scripts/python.exe
 else
+VENV ?= .venv
 PY := $(VENV)/bin/python
 endif
 
