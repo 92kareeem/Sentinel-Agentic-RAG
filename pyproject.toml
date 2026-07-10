@@ -1,0 +1,52 @@
+[project]
+name = "sentinel"
+version = "0.1.0"
+description = "Self-healing, guardrailed agentic RAG platform (AWS free tier + Groq)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi~=0.115",
+    "mangum~=0.19",
+    "pydantic~=2.9",
+    "pydantic-settings~=2.6",
+    "httpx~=0.27",
+    "boto3~=1.35",
+    "langgraph~=0.2",
+    "sentence-transformers~=3.3",   # pulls torch; CPU wheels forced in Dockerfile.lambda
+    "faiss-cpu~=1.9",
+    "rank-bm25~=0.2.2",
+    "pymupdf~=1.24",
+    "numpy~=2.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest~=8.3",
+    "moto[dynamodb]~=5.0",
+    "ruff~=0.8",
+    "mypy~=1.13",
+    "uvicorn~=0.32",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+include = ["app*", "ingestion*"]
+
+[tool.setuptools.package-dir]
+"" = "backend"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true      # faiss/rank_bm25/fitz ship no type stubs
+mypy_path = "backend"

@@ -1,0 +1,27 @@
+# --- secrets: NEVER commit ---
+.env
+.env.*
+!.env.example
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# --- built index artifacts (live in S3 /index/, not git) ---
+index/
+*.faiss
+*.pkl
+chunks.jsonl
+
+# --- frontend ---
+node_modules/
+dist/
+
+# --- OS / editor noise ---
+.DS_Store
+Thumbs.db
