@@ -55,3 +55,66 @@ class TraceRecorder:
 
     def dump(self, final_status: str) -> str:
         return json.dumps(self.to_dict(final_status), indent=2)
+
+
+# ------------------------------------------------------------ trace store
+# Single PutItem at request end (never partial mid-request writes).
+# local_mode keeps traces in memory so the API works on a laptop.
+
+_local_traces: dict[str, dict] = {}
+
+
+def put_trace(record: dict) -> None:
+    from app.config import get_settings
+
+    settings = get_settings()
+    record = {**record, "created_at": record.get("created_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    if settings.local_mode:
+        _local_traces[record["trace_id"]] = record
+        return
+    import boto3
+
+    record["ttl"] = int(time.time()) + 30 * 86400  # NON-NEGOTIABLE 30-day expiry
+    table = boto3.resource("dynamodb", region_name=settings.aws_region).Table(
+        settings.ddb_table_traces
+    )
+    table.put_item(Item=_to_ddb(record))
+
+
+def get_trace(trace_id: str) -> dict | None:
+    from app.config import get_settings
+
+    settings = get_settings()
+    if settings.local_mode:
+        return _local_traces.get(trace_id)
+    import boto3
+
+    table = boto3.resource("dynamodb", region_name=settings.aws_region).Table(
+        settings.ddb_table_traces
+    )
+    return table.get_item(Key={"trace_id": trace_id}).get("Item")
+
+
+def list_traces(limit: int = 20) -> list[dict]:
+    from app.config import get_settings
+
+    settings = get_settings()
+    if settings.local_mode:
+        return list(_local_traces.values())[-limit:]
+    import boto3
+
+    table = boto3.resource("dynamodb", region_name=settings.aws_region).Table(
+        settings.ddb_table_traces
+    )
+    return table.scan(Limit=limit).get("Items", [])
+
+
+def _to_ddb(obj: object) -> object:
+    """Recursively convert floats to str for DynamoDB (no float type support)."""
+    if isinstance(obj, float):
+        return str(obj)
+    if isinstance(obj, dict):
+        return {k: _to_ddb(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_to_ddb(v) for v in obj]
+    return obj

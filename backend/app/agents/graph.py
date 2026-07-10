@@ -14,18 +14,23 @@ from app.agents.state import AgentState
 
 
 def grounding_check_node(state: AgentState) -> AgentState:
-    """Deterministic citation check (P2 stub of guardrails/grounding.py; P3 hardens it).
+    """Deterministic grounding gate (guardrails/grounding.py).
 
-    Every cited chunk_id must exist among the retrieved chunks — refuses
-    rather than trusting the critic's score blindly if the answer cites
-    chunks that were never actually retrieved.
+    Strips unsupported sentences; if >30% were stripped the answer is
+    untrustworthy — treated like a critic failure so the repair loop (or
+    refusal) takes over rather than shipping a hallucination-heavy answer.
     """
-    retrieved_ids = {c.chunk_id for c in state["retrieved"]}
-    cited_ids = {c.chunk_id for c in state["citations"]}
-    if cited_ids and not cited_ids.issubset(retrieved_ids):
-        state["status"] = "refused"
-        state["answer"] = "Answer referenced chunks outside the retrieved context; refusing."
+    from app.guardrails import grounding
+
+    result = grounding.verify(state["answer"], state["retrieved"])
+    state["trace"].record_step(
+        "grounding_check", 0, stripped_ratio=f"{result.stripped_ratio:.2f}", ok=result.ok
+    )
+    if not result.ok:
+        state["status"] = "running"  # routed like a critic failure below
         return state
+    state["answer"] = result.clean_answer
+    state["citations"] = [c for c in state["citations"] if c.chunk_id in set(result.valid_chunk_ids)]
     state["status"] = "answered"
     return state
 
@@ -52,6 +57,16 @@ def _route_after_critic(state: AgentState) -> str:
     c = state["critic"]
     if c and c.faithfulness >= 0.7 and c.relevance >= 0.7:
         return "grounding_check"
+    if state["attempt"] == 0:
+        return "repair_rewrite"
+    if state["attempt"] == 1:
+        return "repair_escalate"
+    return "refusal"
+
+
+def _route_after_grounding(state: AgentState) -> str:
+    if state["status"] == "answered":
+        return "end"
     if state["attempt"] == 0:
         return "repair_rewrite"
     if state["attempt"] == 1:
@@ -88,6 +103,15 @@ def build_graph():
     )
     g.add_edge("repair_rewrite", "retriever")
     g.add_edge("repair_escalate", "synthesizer")
-    g.add_edge("grounding_check", END)
+    g.add_conditional_edges(
+        "grounding_check",
+        _route_after_grounding,
+        {
+            "end": END,
+            "repair_rewrite": "repair_rewrite",
+            "repair_escalate": "repair_escalate",
+            "refusal": "refusal",
+        },
+    )
     g.add_edge("refusal", END)
     return g.compile()

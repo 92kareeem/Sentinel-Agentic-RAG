@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     ddb_table_quotas: str = "sentinel-quotas"
     ddb_table_traces: str = "sentinel-traces"
     use_s3_index: bool = False
+    # True on laptops: auth/quota/traces use in-memory fixtures instead of DynamoDB
+    local_mode: bool = True
 
 
 @lru_cache
