@@ -1,0 +1,27 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install (lint/test deps only — no torch in CI)
+        run: |
+          pip install ruff mypy pytest moto[dynamodb] fastapi mangum httpx \
+            pydantic pydantic-settings langgraph rank-bm25 numpy
+      - name: Ruff
+        run: ruff check backend
+      - name: Mypy
+        run: mypy backend/app --ignore-missing-imports || true  # advisory until stubs settle
+      - name: Pytest (offline suite)
+        run: pytest backend/tests -q
+        env:
+          PYTHONPATH: backend
