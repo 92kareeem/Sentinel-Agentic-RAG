@@ -16,6 +16,16 @@ Every step recorded here as it is executed (P4 teaching contract).
 - Users seeded (admin + demo); plaintext keys in gitignored infra/API_KEYS.txt (rotate by re-running infra/seed_users.py).
 - LEARNING: quota check is one conditional UpdateItem — the write IS the check, race-free by design.
 
+## Step 4b — ECR + image — DONE 2026-07-15
+- Repo sentinel-api. Image built from docker/Dockerfile.lambda (no torch; ONNX MiniLM). Compressed 297 MB (< 500 MB free tier).
+- GOTCHA: Docker 29 pushes OCI index + provenance attestations; Lambda rejects them ("image manifest... not supported"). Fix: `docker buildx build --provenance=false --sbom=false ... --push`.
+
+## Step 4c — Lambda + Function URL — DONE 2026-07-15
+- Function sentinel-api: image package, 2048 MB, 30s, role sentinel-lambda-role, env GROQ_API_KEY + S3_BUCKET_DOCS (rest baked in image).
+- Function URL (auth NONE): https://chlc5xtu67wbi2i3gfceyas5zy0etude.lambda-url.ap-south-1.on.aws/
+- GOTCHA (Oct 2025 change): NONE-auth URLs need TWO resource policy statements — lambda:InvokeFunctionUrl (FunctionUrlAuthType=NONE) AND lambda:InvokeFunction (InvokedViaFunctionUrl=true). With only the first, every request gets AWS-level "Forbidden".
+- Smoke test PASSED: /healthz 200; /v1/query returned cited table answer (India 2%), critic 1.0/1.0, trace_id issued; bad key -> 401 from app.
+
 ## Step 4a — index upload + Lambda execution role — DONE 2026-07-11
 - index/ artifacts uploaded to s3://sentinel-docs-440744255230/index/ (bm25.pkl, chunks.jsonl, faiss.index).
 - Role `sentinel-lambda-role` (trust: lambda.amazonaws.com) + inline `sentinel-lambda-policy` (infra/iam/lambda-policy.json): S3 Get/Put on docs bucket objects, 5 DynamoDB actions on 3 tables + 2 GSIs, logs scoped to /aws/lambda/sentinel-api. No resource wildcards.

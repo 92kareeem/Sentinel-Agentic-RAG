@@ -1,0 +1,15 @@
+{
+  "rules": [
+    {
+      "rulePriority": 1,
+      "description": "expire untagged layers 1 day after a new push replaces them",
+      "selection": {
+        "tagStatus": "untagged",
+        "countType": "sinceImagePushed",
+        "countUnit": "days",
+        "countNumber": 1
+      },
+      "action": { "type": "expire" }
+    }
+  ]
+}
