@@ -8,8 +8,8 @@ whole self-healing state machine is readable in one place.
 
 from langgraph.graph import END, StateGraph
 
-from app.agents import repair, retriever, router, synthesizer
 from app.agents import critic as critic_mod
+from app.agents import repair, retriever, router, synthesizer
 from app.agents.state import AgentState
 
 
@@ -30,7 +30,8 @@ def grounding_check_node(state: AgentState) -> AgentState:
         state["status"] = "running"  # routed like a critic failure below
         return state
     state["answer"] = result.clean_answer
-    state["citations"] = [c for c in state["citations"] if c.chunk_id in set(result.valid_chunk_ids)]
+    valid = set(result.valid_chunk_ids)
+    state["citations"] = [c for c in state["citations"] if c.chunk_id in valid]
     state["status"] = "answered"
     return state
 
@@ -86,11 +87,15 @@ def build_graph():
     g.add_node("refusal", refusal_node)
 
     g.set_entry_point("router")
-    g.add_conditional_edges("router", _guard("retriever"), {"retriever": "retriever", "refusal": "refusal"})
+    g.add_conditional_edges(
+        "router", _guard("retriever"), {"retriever": "retriever", "refusal": "refusal"}
+    )
     g.add_conditional_edges(
         "retriever", _guard("synthesizer"), {"synthesizer": "synthesizer", "refusal": "refusal"}
     )
-    g.add_conditional_edges("synthesizer", _guard("critic"), {"critic": "critic", "refusal": "refusal"})
+    g.add_conditional_edges(
+        "synthesizer", _guard("critic"), {"critic": "critic", "refusal": "refusal"}
+    )
     g.add_conditional_edges(
         "critic",
         _route_after_critic,

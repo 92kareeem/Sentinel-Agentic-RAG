@@ -7,11 +7,11 @@ didn't live in the same space as our torch-built FAISS index, retrieval would
 be confidently wrong.
 """
 
-import numpy as np
-from huggingface_hub import hf_hub_download
+from pathlib import Path
 
 from app.config import get_settings
 from app.rag import embeddings
+from huggingface_hub import hf_hub_download
 
 REPO = "Xenova/all-MiniLM-L6-v2"
 
@@ -23,8 +23,8 @@ def main() -> None:
 
     for remote, local in [("onnx/model_quantized.onnx", "model_quantized.onnx"),
                           ("tokenizer.json", "tokenizer.json")]:
-        path = hf_hub_download(REPO, remote)
-        (dest / local).write_bytes(open(path, "rb").read())
+        path = Path(hf_hub_download(REPO, remote))
+        (dest / local).write_bytes(path.read_bytes())
         print(f"fetched {local} ({(dest / local).stat().st_size / 1e6:.1f} MB)")
 
     tests = [

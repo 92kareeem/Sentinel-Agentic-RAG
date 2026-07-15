@@ -4,9 +4,8 @@ Uses TestClient (in-process, no server needed). The /v1/query call is a REAL
 run: guardrail chain -> agent graph -> live Groq -> grounding -> trace store.
 """
 
-from fastapi.testclient import TestClient
-
 from app.main import app
+from fastapi.testclient import TestClient
 
 client = TestClient(app, raise_server_exceptions=False)
 

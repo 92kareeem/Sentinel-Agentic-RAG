@@ -9,7 +9,6 @@ import time
 from unittest.mock import patch
 
 import pytest
-
 from app.agents import retriever
 from app.agents.graph import build_graph
 from app.agents.state import AgentState

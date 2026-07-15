@@ -56,6 +56,8 @@ def router_node(state: AgentState) -> AgentState:
     state["token_budget_left"] -= tokens_in + tokens_out
 
     duration_ms = int((time.perf_counter() - t0) * 1000)
-    state["trace"].record_step("router", duration_ms, tokens_in, tokens_out, label=label, model=model)
+    state["trace"].record_step(
+        "router", duration_ms, tokens_in, tokens_out, label=label, model=model
+    )
     state["trace"].model_path.append(model)
     return state

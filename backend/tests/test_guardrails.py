@@ -2,11 +2,10 @@
 
 import boto3
 import pytest
-from fastapi import HTTPException
-from moto import mock_aws
-
 from app.config import get_settings
 from app.guardrails import injection, pii, quota
+from fastapi import HTTPException
+from moto import mock_aws
 
 # ------------------------------------------------------------ injection
 

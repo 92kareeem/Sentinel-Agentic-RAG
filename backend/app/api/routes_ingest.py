@@ -41,7 +41,9 @@ def request_upload(
         Params={"Bucket": settings.s3_bucket_docs, "Key": key},
         ExpiresIn=_UPLOAD_EXPIRY_S,
     )
-    return PresignedUploadResponse(doc_id=doc_id, upload_url=url, expires_in_seconds=_UPLOAD_EXPIRY_S)
+    return PresignedUploadResponse(
+        doc_id=doc_id, upload_url=url, expires_in_seconds=_UPLOAD_EXPIRY_S
+    )
 
 
 @router.post("/documents/{doc_id}/index")

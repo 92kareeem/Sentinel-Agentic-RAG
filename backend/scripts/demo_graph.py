@@ -40,7 +40,10 @@ def run(query: str) -> None:
     result = graph.invoke(state)
 
     print(f"\n{'=' * 70}\nQ: {query}")
-    print(f"status: {result['status']} | repairs: {trace.repair_count} | model_path: {trace.model_path}")
+    print(
+        f"status: {result['status']} | repairs: {trace.repair_count} "
+        f"| model_path: {trace.model_path}"
+    )
     if result["critic"]:
         print(
             f"critic: faithfulness={result['critic'].faithfulness:.2f} "

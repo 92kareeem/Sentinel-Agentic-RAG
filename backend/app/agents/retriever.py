@@ -47,7 +47,8 @@ def retriever_node(state: AgentState) -> AgentState:
     qvec = embeddings.embed_texts([state["query"]])[0]
     dense = [row for row, _ in faiss_store.search(_index, qvec, settings.candidates_per_retriever)]
     sparse = [
-        row for row, _ in bm25_store.search(_bm25, state["query"], settings.candidates_per_retriever)
+        row
+        for row, _ in bm25_store.search(_bm25, state["query"], settings.candidates_per_retriever)
     ]
     fused = bm25_store.rrf_fuse([dense, sparse], k=settings.rrf_k, top_k=settings.top_k)
 

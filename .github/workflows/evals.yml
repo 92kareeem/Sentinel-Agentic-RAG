@@ -21,7 +21,7 @@ jobs:
         working-directory: .
         env:
           PYTHONPATH: backend
-      - name: Run evals (gates: faithfulness >= 0.75, refusal >= 2/3)
+      - name: "Run evals (gates: faithfulness >= 0.75, refusal >= 2/3)"
         run: python evals/run.py
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}

@@ -75,5 +75,7 @@ def critic_node(state: AgentState) -> AgentState:
     state["token_budget_left"] -= tokens_in + tokens_out
 
     duration_ms = int((time.perf_counter() - t0) * 1000)
-    state["trace"].record_step("critic", duration_ms, tokens_in, tokens_out, why=result.get("why", ""))
+    state["trace"].record_step(
+        "critic", duration_ms, tokens_in, tokens_out, why=result.get("why", "")
+    )
     return state

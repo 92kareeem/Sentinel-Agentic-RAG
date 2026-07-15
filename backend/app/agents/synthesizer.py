@@ -54,5 +54,7 @@ def synthesizer_node(state: AgentState) -> AgentState:
     state["token_budget_left"] -= tokens_in + tokens_out
 
     duration_ms = int((time.perf_counter() - t0) * 1000)
-    state["trace"].record_step("synthesizer", duration_ms, tokens_in, tokens_out, model=state["model"])
+    state["trace"].record_step(
+        "synthesizer", duration_ms, tokens_in, tokens_out, model=state["model"]
+    )
     return state

@@ -11,8 +11,14 @@ import re
 from fastapi import HTTPException
 
 _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("override_instructions", re.compile(r"ignore\s+(all\s+)?(previous|above|prior)\s+instructions", re.I)),
-    ("system_prompt_probe", re.compile(r"(system\s+prompt|you\s+are\s+now|new\s+instructions:)", re.I)),
+    (
+        "override_instructions",
+        re.compile(r"ignore\s+(all\s+)?(previous|above|prior)\s+instructions", re.I),
+    ),
+    (
+        "system_prompt_probe",
+        re.compile(r"(system\s+prompt|you\s+are\s+now|new\s+instructions:)", re.I),
+    ),
     ("role_tag", re.compile(r"<\s*/?\s*(system|assistant|user)\s*>|\[/?(INST|SYS)\]", re.I)),
     ("base64_blob", re.compile(r"[A-Za-z0-9+/=]{200,}")),
     ("zero_width", re.compile(r"[​‌‍⁠﻿]")),

@@ -68,7 +68,8 @@ def put_trace(record: dict) -> None:
     from app.config import get_settings
 
     settings = get_settings()
-    record = {**record, "created_at": record.get("created_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    created = record.get("created_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    record = {**record, "created_at": created}
     if settings.local_mode:
         _local_traces[record["trace_id"]] = record
         return

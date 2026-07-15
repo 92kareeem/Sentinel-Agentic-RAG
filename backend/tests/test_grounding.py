@@ -25,7 +25,9 @@ def test_good_answer_passes() -> None:
 
 
 def test_fabricated_number_is_stripped() -> None:
-    answer = "Refunds take 3 days [chunk:c1]. Refunds take 99 days [chunk:c1]. Fee is 5% [chunk:c1]."
+    answer = (
+        "Refunds take 3 days [chunk:c1]. Refunds take 99 days [chunk:c1]. Fee is 5% [chunk:c1]."
+    )
     r = grounding.verify(answer, CHUNKS)
     assert "99" not in r.clean_answer
     assert not r.ok  # 1/3 stripped > 30%
