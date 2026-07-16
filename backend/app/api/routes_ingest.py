@@ -25,7 +25,7 @@ from app.models.schemas import IndexJobResponse, PresignedUploadResponse
 router = APIRouter()
 
 _UPLOAD_EXPIRY_S = 900
-_FILENAME_RE = re.compile(r"[\w.\- ]{1,128}\.(pdf|md|txt)", re.I)
+_ALLOWED_EXT = {"pdf", "md", "txt"}
 
 
 def _require_aws() -> Any:
@@ -36,9 +36,18 @@ def _require_aws() -> Any:
 
 
 def _safe_filename(filename: str) -> str:
-    if not _FILENAME_RE.fullmatch(filename):
-        raise HTTPException(status_code=400, detail="filename must be .pdf/.md/.txt")
-    return filename
+    """Validate the extension and sanitize the stem to a key-safe form.
+
+    Sanitizes rather than rejects so real-world names ('FIMP+RFI Draft.pdf')
+    work — disallowed characters become underscores. Idempotent: a name that
+    is already safe passes through unchanged, so re-validating the ticket's
+    filename in the index step is a no-op.
+    """
+    stem, dot, ext = filename.rpartition(".")
+    if not dot or ext.lower() not in _ALLOWED_EXT:
+        raise HTTPException(status_code=400, detail="file must be .pdf, .md, or .txt")
+    safe_stem = re.sub(r"[^\w.\- ]+", "_", stem).strip("_ ") or "document"
+    return f"{safe_stem[:100]}.{ext.lower()}"
 
 
 @router.post("/documents")
@@ -46,7 +55,7 @@ def request_upload(
     filename: str, user: dict[str, Any] = Depends(resolve_user)
 ) -> PresignedUploadResponse:
     settings = _require_aws()
-    _safe_filename(filename)
+    filename = _safe_filename(filename)  # sanitized name is what we store and return
     check_upload_quota(user, incoming_bytes=0)  # doc-count check before issuing a URL
 
     import boto3
@@ -80,7 +89,7 @@ def index_document(
     avoids granting the Lambda role s3:ListBucket just to discover it.
     """
     settings = _require_aws()
-    _safe_filename(filename)
+    filename = _safe_filename(filename)
 
     import boto3
     from botocore.exceptions import ClientError
