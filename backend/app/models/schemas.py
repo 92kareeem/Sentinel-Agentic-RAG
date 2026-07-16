@@ -77,7 +77,10 @@ class RefusalResponse(BaseModel):
 
 class PresignedUploadResponse(BaseModel):
     doc_id: str
-    upload_url: str
+    upload_url: str  # S3 endpoint the browser POSTs a multipart form to
+    fields: dict[str, str]  # signed form fields (policy, signature, key, ...)
+    filename: str
+    max_bytes: int
     expires_in_seconds: int
 
 

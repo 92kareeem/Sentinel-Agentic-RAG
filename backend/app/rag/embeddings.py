@@ -41,26 +41,31 @@ def _get_onnx() -> tuple[Any, Any]:
     return _onnx
 
 
-def _embed_onnx(texts: list[str]) -> np.ndarray:
+def _embed_onnx(texts: list[str], batch_size: int = 32) -> np.ndarray:
     """Mean-pooled, L2-normalized MiniLM embeddings via onnxruntime.
 
-    Must reproduce sentence-transformers' pipeline exactly (mean pooling over
-    the attention mask, then normalize) — verified by scripts/export_onnx.py.
+    Batched with padding so ingesting a whole document is fast enough to run
+    inside a single Lambda invocation. Reproduces sentence-transformers'
+    pipeline exactly (mean pooling over the mask, then normalize) — verified
+    by scripts/export_onnx.py.
     """
     session, tokenizer = _get_onnx()
-    out = []
-    for text in texts:
-        enc = tokenizer.encode(text)
-        ids = np.array([enc.ids], dtype=np.int64)
-        mask = np.array([enc.attention_mask], dtype=np.int64)
+    out: list[np.ndarray] = []
+    for start in range(0, len(texts), batch_size):
+        encs = [tokenizer.encode(t) for t in texts[start : start + batch_size]]
+        maxlen = max((len(e.ids) for e in encs), default=1)
+        ids = np.zeros((len(encs), maxlen), dtype=np.int64)
+        mask = np.zeros((len(encs), maxlen), dtype=np.int64)
+        for j, e in enumerate(encs):
+            ids[j, : len(e.ids)] = e.ids
+            mask[j, : len(e.attention_mask)] = e.attention_mask
         hidden = session.run(
             None,
             {"input_ids": ids, "attention_mask": mask, "token_type_ids": np.zeros_like(ids)},
-        )[0]  # (1, seq, 384)
+        )[0]  # (batch, seq, 384)
         m = mask[..., None].astype(np.float32)
-        vec = (hidden * m).sum(axis=1) / np.clip(m.sum(axis=1), 1e-9, None)
-        out.append(vec[0])
-    vecs = np.asarray(out, dtype=np.float32)
+        out.append((hidden * m).sum(axis=1) / np.clip(m.sum(axis=1), 1e-9, None))
+    vecs = np.vstack(out).astype(np.float32)
     return vecs / np.clip(np.linalg.norm(vecs, axis=1, keepdims=True), 1e-9, None)
 
 
@@ -78,12 +83,28 @@ def embed_texts(texts: list[str]) -> np.ndarray:
     return np.asarray(vecs, dtype=np.float32)
 
 
-def token_offsets(text: str) -> list[tuple[int, int]]:
-    """(char_start, char_end) per token from the MiniLM fast tokenizer.
+_offsets_tok: Any = None  # tokenizers.Tokenizer for chunking (no truncation)
 
-    Injected into the chunker so chunk sizes match what the embedder
-    actually sees (512-token model limit).
+
+def _onnx_token_offsets(text: str) -> list[tuple[int, int]]:
+    global _offsets_tok
+    if _offsets_tok is None:
+        from tokenizers import Tokenizer
+
+        _offsets_tok = Tokenizer.from_file(str(get_settings().onnx_model_dir / "tokenizer.json"))
+    return [(int(a), int(b)) for a, b in _offsets_tok.encode(text).offsets if b > a]
+
+
+def token_offsets(text: str) -> list[tuple[int, int]]:
+    """(char_start, char_end) per token from the MiniLM tokenizer.
+
+    Injected into the chunker so chunk sizes match what the embedder actually
+    sees. Dispatches on backend so the same chunker runs under torch (laptop
+    ingestion) and onnx (in-Lambda upload processing) — same WordPiece
+    tokenizer, so offsets are identical either way.
     """
+    if get_settings().embed_backend == "onnx":
+        return _onnx_token_offsets(text)
     enc = get_model().tokenizer(
         text, return_offsets_mapping=True, add_special_tokens=False, truncation=False
     )

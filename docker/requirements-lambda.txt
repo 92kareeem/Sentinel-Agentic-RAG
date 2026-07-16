@@ -1,6 +1,7 @@
 # Lambda image deps — deliberately NOT pyproject.toml: no torch, no
-# sentence-transformers, no pymupdf (ingestion runs on the laptop; the
-# /documents/{id}/index endpoint is a stub until it moves here).
+# sentence-transformers (query embedding uses onnxruntime). pymupdf IS here so
+# the /documents/{id}/index endpoint can parse uploaded PDFs in-Lambda; it is
+# a small pure-wheel (~20 MB) that keeps the image inside ECR's 500 MB tier.
 fastapi~=0.115
 mangum~=0.19
 pydantic~=2.9
@@ -12,3 +13,4 @@ rank-bm25~=0.2.2
 numpy~=2.1
 onnxruntime~=1.20
 tokenizers~=0.21
+pymupdf~=1.24

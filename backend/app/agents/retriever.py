@@ -20,6 +20,16 @@ _chunks: list[Chunk] = []
 _bm25: Any = None
 
 
+def reset_cache() -> None:
+    """Drop the in-memory index so the next query reloads fresh from S3.
+
+    Called after an upload merges a new document — otherwise a warm Lambda
+    would keep serving the pre-upload index until its next cold start.
+    """
+    global _index, _chunks, _bm25
+    _index, _chunks, _bm25 = None, [], None
+
+
 def _ensure_loaded() -> None:
     global _index, _chunks, _bm25
     if _index is None:

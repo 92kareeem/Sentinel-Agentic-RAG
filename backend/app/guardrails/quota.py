@@ -17,6 +17,7 @@ from app.config import get_settings
 
 # local_mode fallback: in-memory counters, same semantics, laptop only
 _local_counts: dict[str, int] = {}
+_local_uploads: dict[str, dict[str, int]] = {}  # user_id -> {count, bytes}
 
 
 def _quota_key(user_id: str) -> str:
@@ -73,3 +74,58 @@ def check_quota(user: dict[str, Any]) -> None:
                 headers={"Retry-After": str(_seconds_until_utc_midnight())},
             ) from exc
         raise
+
+
+def check_upload_quota(user: dict[str, Any], incoming_bytes: int) -> None:
+    """Reject (429) if this upload would exceed the user's lifetime doc/byte
+    limits. Read-then-check (uploads are rare — no concurrency concern like
+    queries have). Admin bypasses."""
+    if user.get("is_admin"):
+        return
+    doc_limit = int(user.get("upload_doc_limit", 10))
+    byte_limit = int(user.get("upload_bytes_limit", 20_971_520))
+    uid = str(user["user_id"])
+    settings = get_settings()
+
+    if settings.local_mode:
+        cur = _local_uploads.get(uid, {"count": 0, "bytes": 0})
+    else:
+        import boto3
+
+        table = boto3.resource("dynamodb", region_name=settings.aws_region).Table(
+            settings.ddb_table_quotas
+        )
+        item = table.get_item(Key={"quota_key": f"{uid}#U"}).get("Item", {})
+        cur = {"count": int(item.get("count", 0)), "bytes": int(item.get("bytes", 0))}
+
+    if cur["count"] >= doc_limit:
+        raise HTTPException(status_code=429, detail=f"upload limit reached ({doc_limit} documents)")
+    if cur["bytes"] + incoming_bytes > byte_limit:
+        raise HTTPException(
+            status_code=429, detail=f"upload storage limit reached ({byte_limit} bytes)"
+        )
+
+
+def record_upload(user: dict[str, Any], size_bytes: int) -> None:
+    """Count a successful upload against the user's lifetime totals."""
+    if user.get("is_admin"):
+        return
+    uid = str(user["user_id"])
+    settings = get_settings()
+    if settings.local_mode:
+        cur = _local_uploads.setdefault(uid, {"count": 0, "bytes": 0})
+        cur["count"] += 1
+        cur["bytes"] += size_bytes
+        return
+
+    import boto3
+
+    table = boto3.resource("dynamodb", region_name=settings.aws_region).Table(
+        settings.ddb_table_quotas
+    )
+    table.update_item(
+        Key={"quota_key": f"{uid}#U"},
+        UpdateExpression="ADD #c :one, #b :sz",
+        ExpressionAttributeNames={"#c": "count", "#b": "bytes"},
+        ExpressionAttributeValues={":one": 1, ":sz": size_bytes},
+    )
