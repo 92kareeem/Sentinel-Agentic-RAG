@@ -15,7 +15,10 @@ from app.models.schemas import Chunk
 _CITED_SENT_RE = re.compile(r"([^.!?\n]+?)\s*\[chunk:([\w-]+)\]\s*[.!?]?", re.S)
 _NUMBER_RE = re.compile(r"\d[\d,]*\.?\d*")
 
-MAX_STRIPPED_RATIO = 0.30
+# Refuse only if MOST of the answer is ungrounded. A single weak sentence in an
+# otherwise-cited answer is stripped and the rest still ships, rather than nuking
+# a good answer to a refusal.
+MAX_STRIPPED_RATIO = 0.50
 
 
 @dataclass(frozen=True)
@@ -35,6 +38,12 @@ def verify(answer: str, retrieved: list[Chunk]) -> GroundingResult:
         return GroundingResult(answer, ok=True, stripped_ratio=0.0, valid_chunk_ids=[])
 
     by_id = {c.chunk_id: c for c in retrieved}
+    # Numbers are checked against the WHOLE retrieved context, not just the one
+    # chunk a sentence happens to cite: the LLM's per-sentence citation is
+    # imperfect (it may cite chunk A for a fact that lives in chunk B, both
+    # retrieved), so a number is "grounded" if it appears anywhere in context.
+    # A number in NO retrieved chunk is still a genuine hallucination -> stripped.
+    context_numbers = {n for c in retrieved for n in _numbers_in(c.text)}
     sentences = _CITED_SENT_RE.findall(answer)
     if not sentences:  # no parseable cited sentences at all -> fail closed
         return GroundingResult(answer, ok=False, stripped_ratio=1.0, valid_chunk_ids=[])
@@ -43,12 +52,10 @@ def verify(answer: str, retrieved: list[Chunk]) -> GroundingResult:
     valid_ids: list[str] = []
     stripped = 0
     for sentence, chunk_id in sentences:
-        chunk = by_id.get(chunk_id)
-        if chunk is None:
+        if chunk_id not in by_id:  # cited a chunk that was never retrieved = fabricated
             stripped += 1
             continue
-        chunk_numbers = _numbers_in(chunk.text)
-        if not _numbers_in(sentence) <= chunk_numbers:
+        if not _numbers_in(sentence) <= context_numbers:  # a number grounded nowhere
             stripped += 1
             continue
         kept.append(f"{sentence.strip()} [chunk:{chunk_id}]")
