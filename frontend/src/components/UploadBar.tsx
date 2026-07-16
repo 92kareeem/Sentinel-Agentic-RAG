@@ -48,7 +48,7 @@ export function UploadBar({ onIndexed }: Props) {
       </button>
       {status.kind === "done" && <span className="upload-done">✓ {status.msg}</span>}
       {status.kind === "error" && <span className="upload-err">{status.msg}</span>}
-      <span className="upload-hint">.pdf / .md / .txt · max 5 MB</span>
+      <span className="upload-hint">.pdf / .md / .txt · max 1 MB</span>
     </div>
   );
 }

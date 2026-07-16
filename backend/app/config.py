@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     top_k: int = 8
     candidates_per_retriever: int = 20
     rrf_k: int = 60
-    max_upload_bytes: int = 5 * 1024 * 1024  # 5 MB per document (S3-enforced)
+    max_upload_bytes: int = 1024 * 1024  # 1 MB per document (S3-enforced); free-tier safe
 
     # --- agent hard caps ---
     token_budget: int = 10_000
