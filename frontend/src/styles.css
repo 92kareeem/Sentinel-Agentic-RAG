@@ -85,6 +85,28 @@ button:disabled { opacity: 0.45; cursor: default; }
   padding: 0.6rem 0.9rem;
   font-size: 0.9rem;
 }
+.scope {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.9rem;
+}
+.scope b { color: var(--text); }
+.scope-clear {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.8rem;
+  padding: 0.3rem 0.7rem;
+}
+.scope-clear:hover { border-color: var(--accent); color: var(--text); }
 
 .answer {
   margin-top: 2rem;

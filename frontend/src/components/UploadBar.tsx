@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { ApiError, uploadDocument } from "../api";
 
 interface Props {
-  onIndexed: (filename: string, chunks: number) => void;
+  onIndexed: (filename: string, chunks: number, docId: string) => void;
 }
 
 type Status =
@@ -25,7 +25,7 @@ export function UploadBar({ onIndexed }: Props) {
     try {
       const result = await uploadDocument(file, (stage) => setStatus({ kind: "busy", stage }));
       setStatus({ kind: "done", msg: `Indexed ${result.chunks_indexed} chunks from ${file.name}` });
-      onIndexed(file.name, result.chunks_indexed);
+      onIndexed(file.name, result.chunks_indexed, result.doc_id);
     } catch (err) {
       const msg =
         err instanceof ApiError ? `${err.status}: ${err.detail}` : "Upload failed — try again";

@@ -47,7 +47,7 @@ def make_groq(critic_scores: list[str]):
 def _state() -> AgentState:
     settings = get_settings()
     return {
-        "query": "How long do refunds take?", "user_id": "t",
+        "query": "How long do refunds take?", "user_id": "t", "doc_id": None,
         "trace": TraceRecorder(), "attempt": 0,
         "model": settings.groq_model_simple,
         "token_budget_left": settings.token_budget,

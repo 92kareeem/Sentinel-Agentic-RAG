@@ -55,7 +55,13 @@ def verify(answer: str, retrieved: list[Chunk]) -> GroundingResult:
         if chunk_id not in by_id:  # cited a chunk that was never retrieved = fabricated
             stripped += 1
             continue
-        if not _numbers_in(sentence) <= context_numbers:  # a number grounded nowhere
+        sent_numbers = _numbers_in(sentence)
+        # Strip only a sentence that makes numeric claims where NONE are grounded
+        # anywhere in context — a real hallucination. Requiring EVERY number to
+        # match was too strict: real answers cite one chunk for a multi-figure
+        # sentence, and number formatting varies ($1.2M, 99.9%, ranges), so a
+        # single mismatch shouldn't discard an otherwise-grounded sentence.
+        if sent_numbers and sent_numbers.isdisjoint(context_numbers):
             stripped += 1
             continue
         kept.append(f"{sentence.strip()} [chunk:{chunk_id}]")

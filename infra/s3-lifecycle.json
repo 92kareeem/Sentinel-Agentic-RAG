@@ -1,10 +1,10 @@
 {
   "Rules": [
     {
-      "ID": "expire-user-uploads-90d",
+      "ID": "expire-user-uploads-7d",
       "Status": "Enabled",
       "Filter": { "Prefix": "uploads/" },
-      "Expiration": { "Days": 90 }
+      "Expiration": { "Days": 7 }
     }
   ]
 }

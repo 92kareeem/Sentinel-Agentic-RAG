@@ -26,6 +26,7 @@ def run(query: str) -> None:
     state: AgentState = {
         "query": query,
         "user_id": "local",
+        "doc_id": None,
         "trace": trace,
         "attempt": 0,
         "model": settings.groq_model_simple,

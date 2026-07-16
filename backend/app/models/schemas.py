@@ -40,6 +40,7 @@ class Citation(BaseModel):
 class QueryRequest(BaseModel):
     query: str = Field(min_length=1, max_length=1000)
     top_k: int = Field(default=8, ge=1, le=20)
+    doc_id: str | None = None  # scope retrieval to one uploaded document; None = all
 
 
 class CriticScores(BaseModel):

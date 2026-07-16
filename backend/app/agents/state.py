@@ -13,6 +13,7 @@ from app.models.schemas import Chunk, Citation, CriticScores
 class AgentState(TypedDict):
     query: str
     user_id: str
+    doc_id: str | None  # scope retrieval to one uploaded document; None = whole index
     trace: object  # observability.tracing.TraceRecorder; kept as object to avoid an import cycle
     attempt: int
     model: str

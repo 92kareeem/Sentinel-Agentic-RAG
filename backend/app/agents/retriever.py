@@ -54,16 +54,25 @@ def retriever_node(state: AgentState) -> AgentState:
     t0 = time.perf_counter()
     _ensure_loaded()
 
+    # Scope to one uploaded document when the caller asks. The index is shared
+    # across all documents, so without this a vague question can match a
+    # different document than the one the user just uploaded. When scoping, pull
+    # the whole candidate space and filter, so a small document is fully covered.
+    doc_id = state.get("doc_id")
+    cand = _index.ntotal if doc_id else settings.candidates_per_retriever
+
     qvec = embeddings.embed_texts([state["query"]])[0]
-    dense = [row for row, _ in faiss_store.search(_index, qvec, settings.candidates_per_retriever)]
-    sparse = [
-        row
-        for row, _ in bm25_store.search(_bm25, state["query"], settings.candidates_per_retriever)
-    ]
+    dense = [row for row, _ in faiss_store.search(_index, qvec, cand)]
+    sparse = [row for row, _ in bm25_store.search(_bm25, state["query"], cand)]
+    if doc_id:
+        dense = [r for r in dense if _chunks[r].doc_id.startswith(doc_id)]
+        sparse = [r for r in sparse if _chunks[r].doc_id.startswith(doc_id)]
     fused = bm25_store.rrf_fuse([dense, sparse], k=settings.rrf_k, top_k=settings.top_k)
 
     state["retrieved"] = [_chunks[row] for row, _ in fused]
 
     duration_ms = int((time.perf_counter() - t0) * 1000)
-    state["trace"].record_step("retriever", duration_ms, chunks=len(state["retrieved"]))
+    state["trace"].record_step(
+        "retriever", duration_ms, chunks=len(state["retrieved"]), scope=doc_id or "all"
+    )
     return state

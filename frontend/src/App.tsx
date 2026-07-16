@@ -15,7 +15,7 @@ export default function App() {
   const [result, setResult] = useState<QueryResult | null>(null);
   const [trace, setTrace] = useState<TraceRecord | null>(null);
   const [citation, setCitation] = useState<Citation | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [activeDoc, setActiveDoc] = useState<{ docId: string; filename: string } | null>(null);
 
   const ask = async (query: string) => {
     setLoading(true);
@@ -24,7 +24,7 @@ export default function App() {
     setTrace(null);
     setCitation(null);
     try {
-      const r = await postQuery(query);
+      const r = await postQuery(query, activeDoc?.docId);
       setResult(r);
       getTrace(r.trace_id).then(setTrace).catch(() => {});
     } catch (e) {
@@ -54,11 +54,18 @@ export default function App() {
       <QueryBox loading={loading} onSubmit={ask} error={error} />
 
       <UploadBar
-        onIndexed={(filename) =>
-          setNotice(`"${filename}" is indexed — ask a question about it below.`)
-        }
+        onIndexed={(filename, _chunks, docId) => setActiveDoc({ docId, filename })}
       />
-      {notice && <div className="notice">{notice}</div>}
+      {activeDoc && (
+        <div className="scope">
+          <span>
+            Answering from <b>{activeDoc.filename}</b>
+          </span>
+          <button className="scope-clear" onClick={() => setActiveDoc(null)}>
+            Ask across all documents
+          </button>
+        </div>
+      )}
 
       {result && isRefusal(result) && (
         <section className="refusal">

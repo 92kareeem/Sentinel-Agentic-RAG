@@ -37,10 +37,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
-export function postQuery(query: string): Promise<QueryResult> {
+export function postQuery(query: string, docId?: string | null): Promise<QueryResult> {
   return request<QueryResult>("/v1/query", {
     method: "POST",
-    body: JSON.stringify({ query }),
+    body: JSON.stringify(docId ? { query, doc_id: docId } : { query }),
   });
 }
 

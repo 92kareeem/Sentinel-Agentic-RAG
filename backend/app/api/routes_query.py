@@ -54,6 +54,7 @@ def query(
     state: AgentState = {
         "query": scrubbed,
         "user_id": str(user["user_id"]),
+        "doc_id": req.doc_id,
         "trace": trace,
         "attempt": 0,
         "model": settings.groq_model_simple,
