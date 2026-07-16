@@ -36,7 +36,7 @@ def _get_onnx() -> tuple[Any, Any]:
         d = get_settings().onnx_model_dir
         session = onnxruntime.InferenceSession(str(d / "model_quantized.onnx"))
         tokenizer = Tokenizer.from_file(str(d / "tokenizer.json"))
-        tokenizer.enable_truncation(max_length=512)
+        tokenizer.enable_truncation(max_length=256)  # all-MiniLM-L6-v2 real max
         _onnx = (session, tokenizer)
     return _onnx
 
@@ -92,6 +92,10 @@ def _onnx_token_offsets(text: str) -> list[tuple[int, int]]:
         from tokenizers import Tokenizer
 
         _offsets_tok = Tokenizer.from_file(str(get_settings().onnx_model_dir / "tokenizer.json"))
+        # tokenizer.json ships with truncation (~128 tokens) enabled — that must
+        # NOT apply when computing chunk offsets, or the chunker only ever sees
+        # the first 128 tokens of each section and silently drops the rest.
+        _offsets_tok.no_truncation()
     return [(int(a), int(b)) for a, b in _offsets_tok.encode(text).offsets if b > a]
 
 

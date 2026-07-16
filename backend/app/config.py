@@ -28,8 +28,8 @@ class Settings(BaseSettings):
     embed_backend: str = "torch"
     onnx_model_dir: Path = Path("models/onnx")
     index_dir: Path = Path("index")
-    chunk_size_tokens: int = 512
-    chunk_overlap_tokens: int = 64
+    chunk_size_tokens: int = 256  # matches all-MiniLM-L6-v2 max seq length
+    chunk_overlap_tokens: int = 48
     top_k: int = 8
     candidates_per_retriever: int = 20
     rrf_k: int = 60
