@@ -4,12 +4,12 @@ Guardrailed, self-healing RAG platform: FastAPI + LangGraph on AWS Lambda (free 
 hybrid FAISS+BM25 retrieval, Groq LLMs, critic/repair loop, full request tracing.
 
 ## Status
-- [x] P1 — ingestion + hybrid index (`make ingest`)
-- [ ] P2 — LangGraph agent (router → retriever → synthesizer → critic → repair)
-- [ ] P3 — guardrails + API + tests
-- [ ] P4 — AWS deploy (Lambda container, API GW, DynamoDB, S3, CloudFront)
-- [ ] P5 — evals + CI
-- [ ] P6 — frontend
+      P1 — ingestion + hybrid index (`make ingest`)
+      P2 — LangGraph agent (router → retriever → synthesizer → critic → repair)
+      P3 — guardrails + API + tests
+      P4 — AWS deploy (Lambda container, API GW, DynamoDB, S3, CloudFront)
+      P5 — evals + CI
+      P6 — frontend
 
 ## Quickstart (local)
 ```bash
