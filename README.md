@@ -117,10 +117,6 @@ Deployment is provisioned via IaC in `infra/`. Endpoint URL is issued at deploy 
 
 ## Why this project
 
-Every AI Engineer job ad in 2026 mentions RAG, agents, evals and guardrails as bullet points on a wishlist. This is what those bullet points actually look like when they meet each other in production: a system that routes cheaply, retrieves hybrid, grades itself, repairs when it fails, and refuses to answer when it can't be sure. Every architecture decision above is a real trade-off I made — and can defend in an interview.
+Every AI Engineer job ad in 2026 mentions RAG, agents, evals and guardrails as bullet points on a wishlist. This is what those bullet points actually look like when they meet each other in production: a system that routes cheaply, retrieves hybrid, grades itself, repairs when it fails, and refuses to answer when it can't be sure. Every architecture decision above is a real trade-off I made.
 
-Built by [Syed Abdul Kareem Ahmed](https://linkedin.com/in/92kareem). Relocating to Melbourne, immediate start on offer.
-
-## License
-
-MIT
+Built by [Syed Abdul Kareem Ahmed](https://linkedin.com/in/92kareem). 
