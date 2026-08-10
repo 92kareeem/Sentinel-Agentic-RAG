@@ -2,7 +2,7 @@
 
 A guardrailed, self-healing retrieval-augmented generation platform. Built end-to-end and deployed on AWS free tier.
 
-**Stack:** FastAPI · LangGraph · Hybrid FAISS + BM25 (RRF) · Groq (Llama 3.1 8B routing/critic, 70B escalation) · AWS Lambda + API Gateway + DynamoDB + S3 + CloudFront · pytest · GitHub Actions
+**Stack:** FastAPI · LangGraph · Hybrid FAISS + BM25 (RRF) · Groq (Llama 3.1 8B routing/critic, 70B escalation) · AWS Lambda + API Gateway + DynamoDB + S3 + CloudFront · pytest · GitHub Actions 
 
 ---
 
