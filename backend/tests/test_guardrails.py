@@ -90,3 +90,11 @@ def test_quota_is_per_user(aws_quota_table: None) -> None:
     quota.check_quota(b)  # separate counter, still allowed
     with pytest.raises(HTTPException):
         quota.check_quota(a)
+
+
+def test_upload_quota_defaults_are_more_permissive_for_local_demo() -> None:
+    user = {"user_id": "demo", "is_admin": False}
+    quota._local_uploads.clear()
+    quota.check_upload_quota(user, 1_000)
+    quota.check_upload_quota(user, 1_000)
+    quota.check_upload_quota(user, 1_000)

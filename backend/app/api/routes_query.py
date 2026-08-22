@@ -51,6 +51,10 @@ def query(
 
     settings = get_settings()
     trace = TraceRecorder(user_id=str(user["user_id"]), query_redacted=scrubbed)
+    history = [
+        {"role": turn.role, "content": turn.content}
+        for turn in req.conversation_history
+    ]
     state: AgentState = {
         "query": scrubbed,
         "user_id": str(user["user_id"]),
@@ -65,6 +69,7 @@ def query(
         "citations": [],
         "critic": None,
         "status": "running",
+        "conversation_history": history,
     }
     t0 = time.perf_counter()
     try:

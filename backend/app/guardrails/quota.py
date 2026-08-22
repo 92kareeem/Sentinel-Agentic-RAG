@@ -82,8 +82,8 @@ def check_upload_quota(user: dict[str, Any], incoming_bytes: int) -> None:
     queries have). Admin bypasses."""
     if user.get("is_admin"):
         return
-    doc_limit = int(user.get("upload_doc_limit", 10))
-    byte_limit = int(user.get("upload_bytes_limit", 20_971_520))
+    doc_limit = int(user.get("upload_doc_limit", 50))
+    byte_limit = int(user.get("upload_bytes_limit", 200_000_000))
     uid = str(user["user_id"])
     settings = get_settings()
 

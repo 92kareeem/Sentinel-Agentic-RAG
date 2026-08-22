@@ -11,6 +11,11 @@ export interface CriticScores {
   relevance: number;
 }
 
+export interface ConversationTurn {
+  role: string;
+  content: string;
+}
+
 export interface QueryResponse {
   trace_id: string;
   answer: string;

@@ -19,8 +19,9 @@ export function CitationDrawer({ citation, onClose }: Props) {
           ×
         </button>
       </header>
+      <div className="drawer-summary">Source excerpt</div>
       <pre className="drawer-quote">{citation.quote}</pre>
-      <footer className="drawer-id">{citation.chunk_id}</footer>
+      <footer className="drawer-id">Chunk ID: {citation.chunk_id}</footer>
     </aside>
   );
 }

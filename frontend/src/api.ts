@@ -2,7 +2,7 @@
 // the key here is the DEMO key only (quota-limited server-side, rotatable).
 // The admin key must never appear in this codebase.
 
-import type { QueryResult, TraceRecord } from "./types";
+import type { ConversationTurn, QueryResult, TraceRecord } from "./types";
 
 const BASE = import.meta.env.VITE_API_BASE as string;
 const KEY = import.meta.env.VITE_API_KEY as string;
@@ -37,10 +37,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
-export function postQuery(query: string, docId?: string | null): Promise<QueryResult> {
+export function postQuery(
+  query: string,
+  docId?: string | null,
+  conversationHistory?: ConversationTurn[],
+): Promise<QueryResult> {
   return request<QueryResult>("/v1/query", {
     method: "POST",
-    body: JSON.stringify(docId ? { query, doc_id: docId } : { query }),
+    body: JSON.stringify(
+      docId
+        ? { query, doc_id: docId, conversation_history: conversationHistory ?? [] }
+        : { query, conversation_history: conversationHistory ?? [] },
+    ),
   });
 }
 
