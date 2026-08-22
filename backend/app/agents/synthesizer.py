@@ -25,6 +25,21 @@ def _build_context(chunks: list) -> str:
     return "\n\n".join(f"[chunk:{c.chunk_id}] ({c.section_path})\n{c.text}" for c in chunks)
 
 
+def _build_user_prompt(state: AgentState) -> str:
+    context = _build_context(state["retrieved"])
+    history_block = ""
+    if state.get("conversation_history"):
+        history_lines = []
+        for turn in state["conversation_history"]:
+            role = turn.get("role", "user").capitalize()
+            content = (turn.get("content") or "").strip()
+            if content:
+                history_lines.append(f"{role}: {content}")
+        if history_lines:
+            history_block = "Previous conversation:\n" + "\n".join(history_lines) + "\n\n"
+    return f"{history_block}Context:\n{context}\n\nQuestion: {state['query']}"
+
+
 def _extract_citations(answer: str, chunks: list) -> list[Citation]:
     by_id = {c.chunk_id: c for c in chunks}
     cited_ids = {cid for cid in by_id if f"[chunk:{cid}]" in answer}
@@ -40,14 +55,13 @@ def synthesizer_node(state: AgentState) -> AgentState:
         return state
 
     t0 = time.perf_counter()
-    context = _build_context(state["retrieved"])
     content, tokens_in, tokens_out = groq_client.chat_completion(
         model=state["model"],
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {state['query']}"},
+            {"role": "user", "content": _build_user_prompt(state)},
         ],
-        max_tokens=512,
+        max_tokens=900,
     )
     state["answer"] = content.strip()
     state["citations"] = _extract_citations(state["answer"], state["retrieved"])

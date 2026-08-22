@@ -18,8 +18,8 @@ class Settings(BaseSettings):
 
     # --- LLM (Groq) ---
     groq_api_key: str = ""
-    groq_model_simple: str = "llama-3.1-8b-instant"
-    groq_model_complex: str = "llama-3.3-70b-versatile"
+    groq_model_simple: str = "openai/gpt-oss-20b"
+    groq_model_complex: str = "openai/gpt-oss-120b"
 
     # --- RAG / index ---
     embed_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
@@ -30,15 +30,20 @@ class Settings(BaseSettings):
     index_dir: Path = Path("index")
     chunk_size_tokens: int = 256  # matches all-MiniLM-L6-v2 max seq length
     chunk_overlap_tokens: int = 48
-    top_k: int = 8
+    top_k: int = 5  # kept low: Groq free-tier caps at 8k tokens/min, a repair loop can burn it fast
     candidates_per_retriever: int = 20
     rrf_k: int = 60
     max_upload_bytes: int = 1024 * 1024  # 1 MB per document (S3-enforced); free-tier safe
 
     # --- agent hard caps ---
     token_budget: int = 10_000
-    deadline_seconds: float = 20.0
+    deadline_seconds: float = 45.0
     max_attempts: int = 2
+    # A rewrite-or-escalate round costs a full retriever+synthesizer+critic
+    # pass (~1.5-2k tokens at top_k=5). Below this reserve, a repair attempt
+    # would start, spend tokens, and still fail budget partway through —
+    # worse than refusing immediately. Route straight to refusal instead.
+    min_repair_token_reserve: int = 1500
 
     # --- AWS (used from P4 onward) ---
     aws_region: str = "ap-south-1"
