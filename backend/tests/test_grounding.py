@@ -65,3 +65,16 @@ def test_insufficient_context_passes_through() -> None:
 def test_uncited_answer_fails_closed() -> None:
     r = grounding.verify("Trust me, refunds are instant.", CHUNKS)
     assert not r.ok
+
+
+def test_back_to_back_citations_with_no_prose_are_all_stripped() -> None:
+    # a degenerate generation: bare citation tags, no actual sentence content,
+    # packed back-to-back with a period immediately after one of the tags.
+    # A sentence-boundary regex that excludes '.' from the sentence body can't
+    # cross that period to find the next tag, silently dropping it from
+    # consideration instead of counting it as stripped — this must not happen.
+    answer = " [chunk:c1] [chunk:c2]. [chunk:c1] [chunk:c2]."
+    r = grounding.verify(answer, CHUNKS)
+    assert not r.ok
+    assert r.stripped_ratio == 1.0
+    assert r.clean_answer == ""
