@@ -14,8 +14,10 @@ def test_evaluate_answer_uses_offline_fallback_for_simple_matches() -> None:
 
 def test_build_eval_report_renders_summary_markdown() -> None:
     rows = [
-        {"id": 1, "category": "factual", "faithfulness": 0.91, "hit": True, "refused": False, "repairs": 0, "latency_ms": 120, "tokens": 40},
-        {"id": 2, "category": "unanswerable", "faithfulness": 1.0, "hit": None, "refused": True, "repairs": 0, "latency_ms": 95, "tokens": 35},
+        {"id": 1, "category": "factual", "faithfulness": 0.91, "hit": True, "refused": False,
+         "repairs": 0, "latency_ms": 120, "tokens": 40},
+        {"id": 2, "category": "unanswerable", "faithfulness": 1.0, "hit": None, "refused": True,
+         "repairs": 0, "latency_ms": 95, "tokens": 35},
     ]
 
     report = build_eval_report(rows, top_k=4)

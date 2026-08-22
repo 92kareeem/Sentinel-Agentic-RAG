@@ -64,9 +64,8 @@ def _reset_breakers():
 
 def test_deterministic_4xx_fails_immediately_without_retry() -> None:
     fake = _FakeClient([_FakeResponse(400, text="bad request")])
-    with patch("app.llm.groq_client.httpx.Client", fake):
-        with pytest.raises(GroqRequestError):
-            groq_client.chat_completion(model="m", messages=[{"role": "user", "content": "x"}])
+    with patch("app.llm.groq_client.httpx.Client", fake), pytest.raises(GroqRequestError):
+        groq_client.chat_completion(model="m", messages=[{"role": "user", "content": "x"}])
     assert fake.calls == 1  # no retries burned on a doomed request
 
 
@@ -95,5 +94,7 @@ def test_circuit_breaker_isolated_per_model() -> None:
     # model "b" is untouched -- its own breaker is still closed
     fake_b = _FakeClient([_ok("fine")])
     with patch("app.llm.groq_client.httpx.Client", fake_b):
-        content, *_ = groq_client.chat_completion(model="b", messages=[{"role": "user", "content": "x"}])
+        content, *_ = groq_client.chat_completion(
+            model="b", messages=[{"role": "user", "content": "x"}]
+        )
     assert content == "fine"
