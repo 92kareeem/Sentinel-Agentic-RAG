@@ -4,7 +4,7 @@ The judge model and prompts are pinned: scores are only comparable across
 runs if the ruler doesn't change between measurements.
 """
 
-JUDGE_MODEL = "llama-3.1-8b-instant"
+JUDGE_MODEL = "openai/gpt-oss-20b"  # llama-3.1-8b-instant was decommissioned by Groq
 
 FAITHFULNESS_PROMPT = (
     "You are a strict evaluation judge. Given a question and the reference answer, "

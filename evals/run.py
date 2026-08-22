@@ -37,7 +37,7 @@ def judge_faithfulness(question: str, reference: str, candidate: str) -> float:
                 "content": f"Question: {question}\nReference: {reference}\nCandidate: {candidate}",
             },
         ],
-        max_tokens=150,
+        max_tokens=300,  # headroom for gpt-oss's hidden reasoning tokens, see groq_client.py
         json_mode=True,
     )
     return float(json.loads(content)["faithfulness"])
