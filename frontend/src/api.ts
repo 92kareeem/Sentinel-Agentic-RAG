@@ -73,12 +73,9 @@ interface IndexResult {
   index_version: string;
 }
 
-// Three-step upload: get a signed S3 form, POST the file straight to S3
-// (no API key — different origin), then ask the API to index it.
-export async function uploadDocument(
-  file: File,
-  onStage?: (stage: string) => void,
-): Promise<IndexResult> {
+// Three-step upload (production/AWS): get a signed S3 form, POST the file
+// straight to S3 (no API key — different origin), then ask the API to index it.
+async function uploadViaS3(file: File, onStage?: (stage: string) => void): Promise<IndexResult> {
   onStage?.("Requesting upload…");
   const ticket = await request<UploadTicket>(
     `/v1/documents?filename=${encodeURIComponent(file.name)}`,
@@ -100,4 +97,30 @@ export async function uploadDocument(
     `/v1/documents/${ticket.doc_id}/index?filename=${encodeURIComponent(ticket.filename)}`,
     { method: "POST" },
   );
+}
+
+// Single-step upload (local dev): no S3, the API chunks + embeds directly.
+async function uploadLocal(file: File, onStage?: (stage: string) => void): Promise<IndexResult> {
+  onStage?.("Uploading and indexing (chunk + embed)…");
+  const form = new FormData();
+  form.append("file", file);
+  const resp = await fetch(`${BASE}/v1/documents/local-upload`, {
+    method: "POST",
+    headers: { "x-api-key": KEY },
+    body: form,
+  });
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new ApiError(resp.status, body.detail ?? "upload failed");
+  }
+  return resp.json() as Promise<IndexResult>;
+}
+
+const IS_LOCAL_API = /^https?:\/\/(localhost|127\.0\.0\.1)/.test(BASE);
+
+export function uploadDocument(
+  file: File,
+  onStage?: (stage: string) => void,
+): Promise<IndexResult> {
+  return IS_LOCAL_API ? uploadLocal(file, onStage) : uploadViaS3(file, onStage);
 }

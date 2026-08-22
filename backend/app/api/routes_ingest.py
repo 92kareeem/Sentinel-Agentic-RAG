@@ -14,7 +14,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 
 from app.agents import retriever
 from app.config import get_settings
@@ -119,4 +119,42 @@ def index_document(
 
     retriever.reset_cache()  # so the next query sees the new document
     record_upload(user, size)
+    return IndexJobResponse(doc_id=doc_id, chunks_indexed=chunks_indexed, index_version=version)
+
+
+@router.post("/documents/local-upload")
+def local_upload(
+    file: UploadFile, user: dict[str, Any] = Depends(resolve_user)
+) -> IndexJobResponse:
+    """Single-step direct upload for local dev: no S3, no presigned URL.
+
+    Only available when local_mode is on. In AWS mode the presigned-POST +
+    /documents/{doc_id}/index flow above is used instead, since Lambda's
+    payload limits and duration billing make proxying uploads a bad idea there.
+    """
+    settings = get_settings()
+    if not settings.local_mode:
+        raise HTTPException(status_code=501, detail="use the presigned upload flow in AWS mode")
+
+    filename = _safe_filename(file.filename or "document")
+    doc_id = uuid.uuid4().hex[:12]
+
+    from app.rag.ingest_runtime import merge_document
+
+    local = Path(settings.index_dir) / f"{doc_id}_{filename}"
+    contents = file.file.read()
+    if len(contents) > settings.max_upload_bytes:
+        raise HTTPException(status_code=413, detail="document exceeds size limit")
+    check_upload_quota(user, incoming_bytes=len(contents))
+    local.write_bytes(contents)
+
+    try:
+        chunks_indexed, version = merge_document(local)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        local.unlink(missing_ok=True)
+
+    retriever.reset_cache()  # so the next query sees the new document
+    record_upload(user, len(contents))
     return IndexJobResponse(doc_id=doc_id, chunks_indexed=chunks_indexed, index_version=version)
