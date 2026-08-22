@@ -24,3 +24,4 @@ class AgentState(TypedDict):
     citations: list[Citation]
     critic: CriticScores | None
     status: Literal["running", "answered", "refused"]
+    conversation_history: list[dict[str, str]]

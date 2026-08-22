@@ -11,6 +11,7 @@ from langgraph.graph import END, StateGraph
 from app.agents import critic as critic_mod
 from app.agents import repair, retriever, router, synthesizer
 from app.agents.state import AgentState
+from app.config import get_settings
 
 
 def grounding_check_node(state: AgentState) -> AgentState:
@@ -52,12 +53,25 @@ def _guard(next_node: str):
     return _route
 
 
+def _can_afford_repair(state: AgentState) -> bool:
+    """A rewrite or escalate round re-runs retriever+synthesizer+critic — a
+    full token-cost pass, not a cheap patch. Below the reserve, that attempt
+    would start, spend tokens, and still fail check_budget() partway through
+    (most likely inside critic, after synthesizer already spent the bulk of
+    it) — strictly worse than refusing now: same outcome, wasted latency and
+    quota on a call that could never finish. Route straight to refusal.
+    """
+    return state["token_budget_left"] >= get_settings().min_repair_token_reserve
+
+
 def _route_after_critic(state: AgentState) -> str:
     if state["status"] == "refused":
         return "refusal"
     c = state["critic"]
     if c and c.faithfulness >= 0.7 and c.relevance >= 0.7:
         return "grounding_check"
+    if not _can_afford_repair(state):
+        return "refusal"
     if state["attempt"] == 0:
         return "repair_rewrite"
     if state["attempt"] == 1:
@@ -68,6 +82,8 @@ def _route_after_critic(state: AgentState) -> str:
 def _route_after_grounding(state: AgentState) -> str:
     if state["status"] == "answered":
         return "end"
+    if not _can_afford_repair(state):
+        return "refusal"
     if state["attempt"] == 0:
         return "repair_rewrite"
     if state["attempt"] == 1:

@@ -24,9 +24,11 @@ from app.models.schemas import (
     RefusalResponse,
     TokenUsage,
 )
+from app.observability.logging import get_logger
 from app.observability.tracing import TraceRecorder, put_trace
 
 router = APIRouter()
+_logger = get_logger()
 
 _graph = None  # compiled once per process, reused across warm invocations
 
@@ -51,6 +53,10 @@ def query(
 
     settings = get_settings()
     trace = TraceRecorder(user_id=str(user["user_id"]), query_redacted=scrubbed)
+    history = [
+        {"role": turn.role, "content": turn.content}
+        for turn in req.conversation_history
+    ]
     state: AgentState = {
         "query": scrubbed,
         "user_id": str(user["user_id"]),
@@ -65,6 +71,7 @@ def query(
         "citations": [],
         "critic": None,
         "status": "running",
+        "conversation_history": history,
     }
     t0 = time.perf_counter()
     try:
@@ -72,8 +79,28 @@ def query(
     except CircuitOpenError as exc:
         from fastapi import HTTPException
 
+        _logger.warning("circuit_open", extra={"trace_id": trace.trace_id, "data": str(exc)})
         put_trace(trace.to_dict("error"))
         raise HTTPException(status_code=503, detail="LLM circuit breaker open") from exc
+    except Exception as exc:
+        # Any node can raise if Groq is unreachable/misbehaving in a way the
+        # retry loop can't fix (e.g. a deterministic 4xx, not a transient
+        # 429/5xx) — groq_client re-raises as RuntimeError once retries are
+        # exhausted. Without this, that exception was uncaught here and
+        # crashed the request with a raw 500 instead of a clean, retryable
+        # response — a single bad Groq call would take the whole request down
+        # with it instead of degrading gracefully like every other failure
+        # mode in this graph. Logged with the exception type/message BEFORE
+        # converting to a clean client response — otherwise the real cause is
+        # invisible server-side, all you'd ever see is "upstream LLM error".
+        from fastapi import HTTPException
+
+        _logger.error(
+            "query_failed",
+            extra={"trace_id": trace.trace_id, "data": f"{type(exc).__name__}: {exc}"},
+        )
+        put_trace(trace.to_dict("error"))
+        raise HTTPException(status_code=503, detail="upstream LLM error — please retry") from exc
 
     latency_ms = int((time.perf_counter() - t0) * 1000)
     refused = result["status"] == "refused" or result["answer"].strip() == "INSUFFICIENT_CONTEXT"

@@ -43,7 +43,7 @@ def router_node(state: AgentState) -> AgentState:
                 },
                 {"role": "user", "content": state["query"]},
             ],
-            max_tokens=5,
+            max_tokens=20,
         )
         cleaned = content.strip().lower()
         if cleaned in {"simple", "multi_hop", "needs_table"}:

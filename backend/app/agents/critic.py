@@ -36,7 +36,7 @@ def _judge_once(query: str, context: str, answer: str, model: str) -> dict:
                 "content": f"Question: {query}\n\nContext:\n{context}\n\nAnswer:\n{answer}",
             },
         ],
-        max_tokens=200,
+        max_tokens=300,
         json_mode=True,
     )
     return {"data": json.loads(content), "tokens_in": tokens_in, "tokens_out": tokens_out}

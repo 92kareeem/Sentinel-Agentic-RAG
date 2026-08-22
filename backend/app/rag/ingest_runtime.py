@@ -12,13 +12,21 @@ Acceptable for a demo; a production version would take a lock or serialize
 through a queue (forbidden here on free-tier grounds).
 """
 
+from __future__ import annotations
+
+import threading
+import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 from app.config import get_settings
 from app.rag import bm25_store, embeddings, faiss_store
 from app.rag.chunking import chunk_file
+
+_job_lock = threading.Lock()
+_jobs: dict[str, dict[str, Any]] = {}
 
 
 def _index_dir() -> Path:
@@ -60,3 +68,42 @@ def merge_document(local_path: Path) -> tuple[int, str]:
 
     version = str(int((index_dir / faiss_store.INDEX_FILE).stat().st_mtime))
     return len(new_chunks), version
+
+
+def submit_ingest_job(local_path: Path, doc_id: str, filename: str) -> str:
+    """Queue ingestion work to run in a background thread and return a job id."""
+
+    job_id = f"{doc_id}-{int(time.time() * 1000)}"
+    state = {
+        "job_id": job_id,
+        "doc_id": doc_id,
+        "filename": filename,
+        "status": "queued",
+        "chunks_indexed": 0,
+        "index_version": "",
+        "error": None,
+    }
+
+    def runner() -> None:
+        try:
+            state["status"] = "running"
+            chunks_indexed, version = merge_document(local_path)
+            state["chunks_indexed"] = chunks_indexed
+            state["index_version"] = version
+            state["status"] = "completed"
+        except Exception as exc:  # pragma: no cover - exercised via failure path if needed
+            state["status"] = "failed"
+            state["error"] = str(exc)
+
+    with _job_lock:
+        _jobs[job_id] = state
+
+    threading.Thread(target=runner, daemon=True).start()
+    return job_id
+
+
+def get_job_status(job_id: str) -> dict[str, Any]:
+    """Read the latest known status for an ingest job."""
+
+    with _job_lock:
+        return dict(_jobs.get(job_id, {}))

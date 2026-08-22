@@ -16,7 +16,7 @@ jobs:
       - name: Install (lint/test deps only — no torch in CI)
         run: |
           pip install ruff mypy pytest moto[dynamodb] fastapi mangum httpx \
-            pydantic pydantic-settings langgraph rank-bm25 numpy
+            pydantic pydantic-settings langgraph rank-bm25 numpy python-multipart
       - name: Ruff
         run: ruff check backend
       - name: Mypy

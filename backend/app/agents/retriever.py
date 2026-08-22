@@ -6,6 +6,7 @@ turns a query into ranked Chunk objects. Runs again after repair_rewrite
 with the rewritten query.
 """
 
+import re
 import time
 from typing import Any
 
@@ -18,6 +19,53 @@ from app.rag import bm25_store, embeddings, faiss_store
 _index: Any = None
 _chunks: list[Chunk] = []
 _bm25: Any = None
+
+_TERM_RE = re.compile(r"\w+")
+
+
+def _normalize_query_terms(query: str) -> set[str]:
+    return {term for term in _TERM_RE.findall(query.lower()) if len(term) > 1}
+
+
+def _term_matches(term: str, text: str) -> bool:
+    tokens = _TERM_RE.findall(text.lower())
+    return any(term in token or token in term for token in tokens)
+
+
+def _rerank_candidates(
+    query: str,
+    chunks: list[Chunk],
+    row_ids: list[int],
+    query_terms: set[str] | None = None,
+) -> list[Chunk]:
+    """Boost chunks whose section path or text aligns tightly with the query."""
+    if not chunks:
+        return []
+
+    terms = query_terms or _normalize_query_terms(query)
+    scored: list[tuple[float, int, Chunk]] = []
+    for rank, chunk in enumerate(chunks):
+        row_id = row_ids[rank] if rank < len(row_ids) else rank
+        combined_text = f"{chunk.section_path}\n\n{chunk.text}".lower()
+        section_text = chunk.section_path.lower()
+
+        overlap = sum(1 for term in terms if _term_matches(term, combined_text))
+        section_overlap = sum(1 for term in terms if _term_matches(term, section_text))
+        exact_phrase_bonus = 1.0 if query.lower() in combined_text else 0.0
+        section_bonus = 0.8 if section_overlap else 0.0
+        positional_bonus = max(0.0, 1.0 - (rank / max(1, len(chunks))))
+
+        score = (
+            overlap
+            + (section_overlap * 1.5)
+            + section_bonus
+            + exact_phrase_bonus
+            + positional_bonus
+        )
+        scored.append((score, -row_id, chunk))
+
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [chunk for _, _, chunk in scored]
 
 
 def reset_cache() -> None:
@@ -68,8 +116,15 @@ def retriever_node(state: AgentState) -> AgentState:
         dense = [r for r in dense if _chunks[r].doc_id.startswith(doc_id)]
         sparse = [r for r in sparse if _chunks[r].doc_id.startswith(doc_id)]
     fused = bm25_store.rrf_fuse([dense, sparse], k=settings.rrf_k, top_k=settings.top_k)
+    ranked_rows = [row for row, _ in fused]
+    reranked = _rerank_candidates(
+        state["query"],
+        [_chunks[row] for row in ranked_rows],
+        ranked_rows,
+        query_terms=_normalize_query_terms(state["query"]),
+    )
 
-    state["retrieved"] = [_chunks[row] for row, _ in fused]
+    state["retrieved"] = reranked[: settings.top_k]
 
     duration_ms = int((time.perf_counter() - t0) * 1000)
     state["trace"].record_step(

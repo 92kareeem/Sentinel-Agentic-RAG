@@ -114,3 +114,21 @@ def test_grounding_strips_uncited_when_critic_passes(scores: list[str]) -> None:
     result, _ = _run(scores)
     # grounding kept the cited sentence verbatim
     assert "[chunk:c1]" in result["answer"]
+
+
+def test_low_token_budget_skips_repair_and_refuses_immediately() -> None:
+    # A critic failure would normally trigger repair_rewrite, but a repair
+    # round costs a full retriever+synthesizer+critic pass -- below the
+    # reserve, starting one would only fail partway through. Must refuse
+    # on attempt 0 without ever entering repair_rewrite.
+    state = _state()
+    state["token_budget_left"] = get_settings().min_repair_token_reserve - 1
+    trace = state["trace"]
+    with (
+        patch.object(retriever, "retriever_node", fake_retriever),
+        patch("app.llm.groq_client.chat_completion", make_groq([BAD])),
+    ):
+        result = build_graph().invoke(state)
+    assert result["status"] == "refused"
+    assert trace.repair_count == 0
+    assert "repair_rewrite" not in [s["name"] for s in trace.steps]
