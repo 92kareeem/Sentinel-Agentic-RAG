@@ -8,6 +8,7 @@ Exit code 1 if gates fail (mean faithfulness < 0.75 or unanswerable-refusal
 """
 
 import json
+import re
 import statistics
 import sys
 import time
@@ -20,11 +21,21 @@ from app.agents.state import AgentState  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.llm import groq_client  # noqa: E402
 from app.observability.tracing import TraceRecorder  # noqa: E402
-
 from judge_prompts import FAITHFULNESS_PROMPT, JUDGE_MODEL  # noqa: E402
 
 GATE_FAITHFULNESS = 0.75
 GATE_REFUSAL = 2 / 3
+
+# Chunk ids gained a page segment ("doc_p2_s1_c0") when PDF extraction became
+# page-aware. The golden dataset records which SECTION should be retrieved, not
+# which page it happened to land on, so the page component is normalized away
+# before comparing. Without this the hit-rate silently reads 0% after any id
+# format change — a metric that fails quietly is worse than no metric.
+_PAGE_SEGMENT_RE = re.compile(r"_p\d+(?=_s\d+_c\d+$)")
+
+
+def _normalize_chunk_id(chunk_id: str) -> str:
+    return _PAGE_SEGMENT_RE.sub("", chunk_id)
 
 
 def judge_faithfulness(question: str, reference: str, candidate: str) -> float:
@@ -52,7 +63,7 @@ def run_item(graph, item: dict) -> dict:
         "token_budget_left": settings.token_budget,
         "deadline_ts": time.monotonic() + settings.deadline_seconds,
         "retrieved": [], "answer": "", "citations": [], "critic": None,
-        "status": "running",
+        "status": "running", "conversation_history": [],
     }
     t0 = time.perf_counter()
     result = graph.invoke(state)
@@ -62,8 +73,8 @@ def run_item(graph, item: dict) -> dict:
         result["status"] == "refused"
         or result["answer"].strip() == "INSUFFICIENT_CONTEXT"
     )
-    retrieved_ids = {c.chunk_id for c in result["retrieved"]}
-    expected = set(item["expected_chunk_ids"])
+    retrieved_ids = {_normalize_chunk_id(c.chunk_id) for c in result["retrieved"]}
+    expected = {_normalize_chunk_id(c) for c in item["expected_chunk_ids"]}
     hit = bool(expected & retrieved_ids) if expected else None
 
     if item["category"] == "unanswerable":
@@ -112,7 +123,8 @@ def main() -> None:
         "| Metric | Value | Gate |", "|---|---|---|",
         f"| Mean faithfulness | **{mean_faith:.3f}** | >= {GATE_FAITHFULNESS} |",
         f"| Retrieval hit-rate (top-{get_settings().top_k}) | {hit_rate:.0%} | — |",
-        f"| Unanswerable refusal-rate | {refusal_rate:.0%} ({sum(r['refused'] for r in unanswerable)}/{len(unanswerable)}) | >= 2/3 |",
+        f"| Unanswerable refusal-rate | {refusal_rate:.0%} "
+        f"({sum(r['refused'] for r in unanswerable)}/{len(unanswerable)}) | >= 2/3 |",
         f"| False refusals (answerable) | {false_refusals}/{len(answerable)} | — |",
         f"| Latency p50 / p95 | {p50} ms / {p95} ms | — |",
         f"| Mean tokens/query | {mean_tokens:.0f} | — |", "",
