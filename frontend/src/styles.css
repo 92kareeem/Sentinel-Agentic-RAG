@@ -127,7 +127,7 @@ button:disabled { opacity: 0.45; cursor: default; }
   font-size: 0.8rem;
   color: var(--muted);
 }
-.answer-status.streaming { color: var(--accent); }
+.answer-status.rendering { color: var(--accent); }
 .answer-text {
   white-space: pre-wrap;
   line-height: 1.7;

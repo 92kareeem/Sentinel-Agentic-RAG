@@ -95,8 +95,6 @@ def query(
     try:
         result = _get_graph().invoke(state)
     except CircuitOpenError as exc:
-        from fastapi import HTTPException
-
         _logger.warning("circuit_open", extra={"trace_id": trace.trace_id, "data": str(exc)})
         put_trace(trace.to_dict("error"))
         raise HTTPException(status_code=503, detail="LLM circuit breaker open") from exc
@@ -111,8 +109,6 @@ def query(
         # mode in this graph. Logged with the exception type/message BEFORE
         # converting to a clean client response — otherwise the real cause is
         # invisible server-side, all you'd ever see is "upstream LLM error".
-        from fastapi import HTTPException
-
         _logger.error(
             "query_failed",
             extra={"trace_id": trace.trace_id, "data": f"{type(exc).__name__}: {exc}"},

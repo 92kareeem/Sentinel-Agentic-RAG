@@ -36,3 +36,37 @@ Every step recorded here as it is executed (P4 teaching contract).
 ## Step 4a — index upload + Lambda execution role — DONE 2026-07-11
 - index/ artifacts uploaded to s3://sentinel-docs-440744255230/index/ (bm25.pkl, chunks.jsonl, faiss.index).
 - Role `sentinel-lambda-role` (trust: lambda.amazonaws.com) + inline `sentinel-lambda-policy` (infra/iam/lambda-policy.json): S3 Get/Put on docs bucket objects, 5 DynamoDB actions on 3 tables + 2 GSIs, logs scoped to /aws/lambda/sentinel-api. No resource wildcards.
+
+## Production-readiness rework — 2026-08-25
+
+Reproducibility and correctness changes that affect deployment:
+
+- **`infra/deploy.sh` now exists.** The Makefile referenced it but it was absent, so
+  "deploy" was an unreviewable sequence of manual CLI steps. The script is idempotent
+  and covers buckets, tables, IAM, ECR, image, Lambda, function URL, index sync and a
+  smoke test.
+- **New table `sentinel-documents`** (`infra/ddb-documents.json`), PK=`USER#<owner>`
+  SK=`DOC#<document_id>` — the document registry. Added to the Lambda IAM policy.
+  Without it, AWS mode has nowhere to record document identity/ownership/lifecycle.
+- **The image builds from a clean checkout.** `Dockerfile.lambda` previously did
+  `COPY models/onnx /opt/onnx`, but `models/onnx/` is gitignored (23 MB binary), so a
+  fresh clone could not build at all. The model is now fetched at build time, pinned
+  by repo + revision. A CI job builds the image on every PR to keep this honest.
+- **Index layout changed to immutable versions.** S3 now holds
+  `index/v<N>/{faiss.index,chunks.jsonl,bm25.pkl,manifest.json}` plus
+  `index/current.json`. Deploy uploads the version directory FIRST and moves the
+  pointer LAST, so a Lambda cold-starting mid-sync reads a complete older version
+  instead of a torn mixture of old and new artifacts.
+- **Upload size is 1 MB, authoritative.** Earlier notes here said 5 MB via
+  `content-length-range`; the presigned condition and the server-side check both use
+  `max_upload_bytes` (1 MB) and are validated at the boundary by tests.
+
+### Still to do for multi-instance writes
+
+Publication is guarded by an in-process lock plus a compare-and-set on the version
+pointer. That is correct for a single Lambda instance and for local development. With
+multiple concurrent instances *writing* (not reading), the CAS can still interleave
+between the S3 read and the pointer PUT. The intended fix is a DynamoDB conditional
+update on an `index-lock` item held for the duration of a publish; the ingestion path
+is already structured to retry on `ConcurrentUpdateError`, so this is a localized
+change in `rag/index_store.py`.

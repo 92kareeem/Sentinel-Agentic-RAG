@@ -2,7 +2,7 @@
 
 A guardrailed, self-healing retrieval-augmented generation platform. Built end-to-end and deployed on AWS free tier.
 
-**Stack:** FastAPI · LangGraph · Hybrid FAISS + BM25 (RRF) · Groq (Llama 3.1 8B routing/critic, 70B escalation) · AWS Lambda + API Gateway + DynamoDB + S3 + CloudFront · pytest · GitHub Actions 
+**Stack:** FastAPI · LangGraph · Hybrid FAISS + BM25 (RRF) · Groq (`openai/gpt-oss-20b` routing/critic, `120b` escalation) · AWS Lambda + DynamoDB + S3 + CloudFront · pytest · GitHub Actions
 
 ---
 
@@ -34,7 +34,7 @@ Sentinel wraps the pipeline in a LangGraph agent that grades its own output and 
 
 - **Router** — Groq 8B classifies query complexity and routes cheaply.
 - **Hybrid retriever** — FAISS (dense, IndexFlatIP) + BM25 (sparse) fused with Reciprocal Rank Fusion (k=60). Sparse recall for exact terms, dense recall for meaning.
-- **Synthesiser** — Groq 70B, grounded on retrieved chunks with data-grounded prompting.
+- **Synthesiser** — grounded strictly on retrieved chunks; document text is fenced and labelled untrusted so content inside an uploaded file cannot act as an instruction.
 - **Critic** — evaluates the answer against retrieved context. Faithfulness and relevance scored.
 - **Repair loop** — on low confidence, rewrites the query and re-retrieves. Bounded to prevent runaway loops.
 - **Guardrails** — input and output. Blocks prompt-injection patterns, PII leakage, off-topic drift.
@@ -46,12 +46,32 @@ The point isn't the framework choices. The point is the platform grades itself, 
 
 ## Status
 
-- [x] **P1** — Ingestion pipeline and hybrid index (`make ingest`)
-- [x] **P2** — LangGraph agent: router → retriever → synthesiser → critic → repair, with Groq small/large model routing
-- [x] **P3** — FastAPI service, input/output guardrails, pytest suite
-- [x] **P4** — AWS deploy: Lambda (container image), API Gateway, DynamoDB (traces + API keys), S3 (index artifacts), CloudFront (frontend distribution)
-- [x] **P5** — Evaluation harness with faithfulness / answer-relevance / retrieval-hit metrics, GitHub Actions CI
-- [x] **P6** — TypeScript frontend
+- [x] Ingestion pipeline and hybrid index (`make ingest`)
+- [x] LangGraph agent: router → retriever → synthesiser → critic → grounding → repair → refusal
+- [x] FastAPI service, guardrail chain, 90-test suite (unit + HTTP contract + end-to-end)
+- [x] Document registry with explicit lifecycle, ownership and tenant isolation
+- [x] Page-aware PDF pipeline with typed failure modes (encrypted / scanned / corrupt)
+- [x] Atomic, versioned index publication safe under concurrent uploads
+- [x] AWS deploy: Lambda container, DynamoDB, S3, CloudFront (`infra/deploy.sh`)
+- [x] Evaluation harness (faithfulness / retrieval-hit / refusal-rate), GitHub Actions CI
+- [x] TypeScript frontend
+
+### Known limitations
+
+These are deliberate scope boundaries, not oversights:
+
+- **No OCR.** Image-only/scanned PDFs are detected and rejected with
+  `UNSUPPORTED_SCANNED_DOCUMENT` rather than indexed as empty.
+- **Answers are not token-streamed.** `/v1/query` returns one JSON body after the
+  graph completes; the UI renders it progressively (labelled as such, not as streaming).
+- **Ingestion is synchronous.** Fine for the 1 MB / 200-page limit this targets. A
+  durable queue (S3 event → SQS → worker) is the right shape beyond that; the
+  previous in-process daemon thread was removed because Lambda freezes on return.
+- **Index publication is single-writer.** Concurrent uploads are serialized and
+  retried, which is correct but not high-throughput.
+- **Cross-process index locking is advisory** (compare-and-set on the version
+  pointer). Correct for one Lambda instance; multi-instance concurrent *writes*
+  need the DynamoDB-conditional lock described in `infra/aws_setup.md`.
 
 ---
 
@@ -60,11 +80,12 @@ The point isn't the framework choices. The point is the platform grades itself, 
 | Decision                     | Choice                                                | Why                                                                    |
 | ---------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------- |
 | Orchestration                | LangGraph                                             | Explicit state machine; conditional edges make the repair loop trivial |
-| Vector store                 | FAISS `IndexFlatIP` in Lambda memory, artifacts on S3 | Exact search, zero servers, free tier                                  |
+| Vector store                 | FAISS `IndexFlatIP`, immutable versioned artifacts on S3 | Exact search, zero servers; versioning makes publication atomic     |
+| Document identity            | Server-generated uuid + DynamoDB registry             | Filenames are neither unique across users nor stable across re-uploads |
 | Sparse retrieval             | BM25                                                  | Exact-term recall the dense index misses                               |
 | Fusion                       | Reciprocal Rank Fusion (k=60)                         | No score calibration needed across dense/sparse                        |
 | LLM provider                 | Groq                                                  | Fast inference, generous free tier                                     |
-| Small/large split            | Llama 3.1 8B (router, critic) + 70B (synthesis)       | 80% of cost lives on the small model; escalate only when needed        |
+| Small/large split            | `gpt-oss-20b` (router, critic) + `120b` (escalation)  | Most cost lives on the small model; escalate only when repair needs it |
 | Serving                      | AWS Lambda container image behind API Gateway         | Cold start acceptable for demo; scales to zero; free tier              |
 | State                        | DynamoDB (traces, API keys)                           | Serverless, single-digit-ms reads, no schema migrations                |
 | Auth                         | API Gateway usage plans + hashed keys in DynamoDB     | Two layers of protection, no Cognito overhead                          |
@@ -107,11 +128,21 @@ make serve                             # local FastAPI on :8000
 ## Deploy
 
 ```bash
-make build-image                       # build Lambda container
-make deploy                            # infra stack up: Lambda, API GW, DynamoDB, S3, CloudFront
+export AWS_ACCOUNT_ID=... GROQ_API_KEY=...
+make deploy            # == bash infra/deploy.sh
 ```
 
-Deployment is provisioned via IaC in `infra/`. Endpoint URL is issued at deploy time; auth is via hashed API key.
+`infra/deploy.sh` is idempotent and creates/updates: S3 buckets (+ lifecycle, CORS),
+the four DynamoDB tables, the least-privilege IAM role, the ECR repo and image, the
+Lambda function and its URL, and finally syncs the local index — publishing the
+version directory *before* the pointer so a cold-starting Lambda never reads a torn
+index. It ends with a `/healthz` smoke test.
+
+The container image fetches the quantized MiniLM at build time rather than copying a
+gitignored `models/onnx/`, so a **fresh clone builds** (this is enforced by a CI job).
+
+Auth is a hashed API key in DynamoDB, checked per request. The frontend ships only a
+non-privileged, quota-limited demo key; the admin key must never be built into it.
 
 ---
 

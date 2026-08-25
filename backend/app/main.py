@@ -35,10 +35,23 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(HTTPException)
     async def http_problem(request: Request, exc: HTTPException) -> JSONResponse:
+        # A structured detail ({"error_code": ..., "message": ...}) is preserved
+        # as fields rather than str()'d into prose: ingestion failures carry a
+        # machine-readable code precisely so the client can explain what went
+        # wrong, and stringifying it made that code unreadable.
+        detail = exc.detail
+        if isinstance(detail, dict):
+            message = str(detail.get("message", "error"))
+            error_code = detail.get("error_code")
+        else:
+            message = str(detail)
+            error_code = None
+
         body = Problem(
-            title=exc.detail if isinstance(exc.detail, str) else "error",
+            title=message,
             status=exc.status_code,
-            detail=str(exc.detail),
+            detail=message,
+            error_code=error_code,
             trace_id=getattr(request.state, "trace_id", None),
         ).model_dump()
         return JSONResponse(

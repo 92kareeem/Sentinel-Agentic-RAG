@@ -243,7 +243,11 @@ class HealthResponse(BaseModel):
 
 
 class Problem(BaseModel):
-    """RFC 7807 error shape; every error response uses this, extended with trace_id."""
+    """RFC 7807 error shape; every error response uses this, extended with
+    trace_id and an optional machine-readable error_code (set for ingestion
+    failures so a client can explain the cause rather than echoing prose)."""
+
+    error_code: str | None = None
 
     type: str = "about:blank"
     title: str

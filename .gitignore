@@ -27,3 +27,6 @@ dist/
 Thumbs.db
 infra/API_KEYS.txt
 models/onnx/
+
+# generated documentation artifact (rebuild locally, not source)
+Sentinel-Architecture-and-Documentation.pdf
