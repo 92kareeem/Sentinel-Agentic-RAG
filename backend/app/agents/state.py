@@ -9,12 +9,20 @@ from typing import Literal, TypedDict
 
 from app.models.schemas import Chunk, Citation, CriticScores
 
+# Imported eagerly, not under TYPE_CHECKING: LangGraph resolves this
+# TypedDict's annotations at runtime to build its state schema, so a string
+# forward reference fails there. There is no import cycle to avoid —
+# observability.tracing imports nothing from app.agents (the original
+# `trace: object` annotation cited a cycle that does not exist, and cost the
+# whole agent package its type checking).
+from app.observability.tracing import TraceRecorder
+
 
 class AgentState(TypedDict):
     query: str
     user_id: str
     doc_id: str | None  # scope retrieval to one uploaded document; None = whole index
-    trace: object  # observability.tracing.TraceRecorder; kept as object to avoid an import cycle
+    trace: TraceRecorder
     attempt: int
     model: str
     token_budget_left: int

@@ -10,6 +10,7 @@ common failure mode that must not crash the request.
 
 import json
 import time
+from typing import Any
 
 from app.agents.budget import check_budget
 from app.agents.state import AgentState
@@ -26,7 +27,7 @@ _SYSTEM_PROMPT = (
 )
 
 
-def _judge_once(query: str, context: str, answer: str, model: str) -> dict:
+def _judge_once(query: str, context: str, answer: str, model: str) -> dict[str, Any]:
     content, tokens_in, tokens_out = groq_client.chat_completion(
         model=model,
         messages=[

@@ -26,6 +26,13 @@ MIN_WORDS_PER_SENTENCE = 2
 # a good answer to a refusal.
 MAX_STRIPPED_RATIO = 0.50
 
+# Fraction of a claim's content words that must appear in its supporting
+# evidence. Low on purpose: this gate exists to catch a claim with essentially
+# nothing to do with what it cites, not to penalize paraphrase or synonyms —
+# judging semantic entailment is the LLM critic's job, and a deterministic
+# checker that tried to do it would produce false refusals on good answers.
+MIN_LEXICAL_OVERLAP = 0.25
+
 
 @dataclass(frozen=True)
 class GroundingResult:
@@ -37,6 +44,49 @@ class GroundingResult:
 
 def _numbers_in(text: str) -> set[str]:
     return {n.replace(",", "") for n in _NUMBER_RE.findall(text)}
+
+
+# Words carrying no topical signal — overlap on these says nothing about
+# whether a chunk supports a claim.
+_STOPWORDS = frozenset({
+    "a", "an", "and", "are", "as", "at", "be", "been", "but", "by", "can",
+    "do", "does", "for", "from", "had", "has", "have", "if", "in", "into",
+    "is", "it", "its", "may", "must", "not", "of", "on", "or", "should",
+    "that", "the", "their", "there", "these", "this", "to", "was", "were",
+    "will", "with", "you", "your", "we", "our", "they", "them", "he", "she",
+    "his", "her",
+})
+
+
+def _content_terms(text: str) -> set[str]:
+    return {w.lower() for w in _WORD_RE.findall(text) if w.lower() not in _STOPWORDS}
+
+
+def _has_lexical_support(sentence: str, cited: Chunk, retrieved: list[Chunk]) -> bool:
+    """Does the cited chunk plausibly support this sentence?
+
+    Requires the claim's content words to overlap the cited chunk's text. A
+    sentence that shares nothing with what it cites is either a fabrication or
+    a misattribution; either way it should not ship with that citation.
+
+    Falls back to accepting overlap with ANY retrieved chunk, because the
+    common real failure is a mis-pointed citation on an otherwise-grounded
+    claim — that is a citation-quality problem the critic scores, not a
+    hallucination worth deleting the sentence over.
+    """
+    claim_terms = _content_terms(sentence)
+    if len(claim_terms) < MIN_WORDS_PER_SENTENCE:
+        return True  # too short to judge; the word-count gate already ran
+
+    def overlap(chunk: Chunk) -> float:
+        chunk_terms = _content_terms(chunk.text) | _content_terms(chunk.section_path)
+        if not chunk_terms:
+            return 0.0
+        return len(claim_terms & chunk_terms) / len(claim_terms)
+
+    if overlap(cited) >= MIN_LEXICAL_OVERLAP:
+        return True
+    return any(overlap(c) >= MIN_LEXICAL_OVERLAP for c in retrieved)
 
 
 def _split_cited_sentences(answer: str) -> list[tuple[str, str]]:
@@ -89,15 +139,28 @@ def verify(answer: str, retrieved: list[Chunk]) -> GroundingResult:
         if len(_WORD_RE.findall(sentence)) < MIN_WORDS_PER_SENTENCE:  # degenerate: no real content
             stripped += 1
             continue
+
         sent_numbers = _numbers_in(sentence)
-        # Strip only a sentence that makes numeric claims where NONE are grounded
-        # anywhere in context — a real hallucination. Requiring EVERY number to
-        # match was too strict: real answers cite one chunk for a multi-figure
-        # sentence, and number formatting varies ($1.2M, 99.9%, ranges), so a
-        # single mismatch shouldn't discard an otherwise-grounded sentence.
+        # A numeric claim is checked against the WHOLE retrieved context rather
+        # than only the cited chunk: per-sentence citation is imperfect (the
+        # model may cite chunk A for a figure that lives in chunk B, both
+        # retrieved). A number present in NO retrieved chunk is a genuine
+        # fabrication and the sentence goes.
         if sent_numbers and sent_numbers.isdisjoint(context_numbers):
             stripped += 1
             continue
+
+        # Lexical support check: the cited chunk must actually share
+        # substantive vocabulary with the claim. Citation-id validity alone
+        # only proved the chunk was retrieved, not that it says anything
+        # related — so a fluent sentence citing an arbitrary retrieved chunk
+        # used to pass. This is deliberately a weak-but-deterministic signal:
+        # it catches a claim wholly unrelated to its evidence without
+        # second-guessing legitimate paraphrase (which is the LLM critic's job).
+        if not _has_lexical_support(sentence, by_id[chunk_id], retrieved):
+            stripped += 1
+            continue
+
         kept.append(f"{sentence.strip()} [chunk:{chunk_id}]")
         valid_ids.append(chunk_id)
 

@@ -8,17 +8,21 @@ with the rewritten query.
 
 import re
 import time
+from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from app.agents.budget import check_budget
 from app.agents.state import AgentState
 from app.config import get_settings
 from app.models.schemas import Chunk
-from app.rag import bm25_store, embeddings, faiss_store
+from app.rag import bm25_store, embeddings, index_store
 
 _index: Any = None
 _chunks: list[Chunk] = []
 _bm25: Any = None
+_version: str | None = None
 
 _TERM_RE = re.compile(r"\w+")
 
@@ -74,23 +78,58 @@ def reset_cache() -> None:
     Called after an upload merges a new document — otherwise a warm Lambda
     would keep serving the pre-upload index until its next cold start.
     """
-    global _index, _chunks, _bm25
-    _index, _chunks, _bm25 = None, [], None
+    global _index, _chunks, _bm25, _version
+    _index, _chunks, _bm25, _version = None, [], None, None
 
 
 def _ensure_loaded() -> None:
-    global _index, _chunks, _bm25
+    global _index, _chunks, _bm25, _version
     if _index is None:
         settings = get_settings()
-        index_dir = settings.index_dir
+        root = Path(settings.index_dir)
         if settings.use_s3_index:
             # Lambda: artifacts live in S3; /tmp is the only writable path.
             # Downloaded once per cold start, reused by every warm invocation.
-            from pathlib import Path
+            root = Path("/tmp/index")
+            index_store.load_current_from_s3(root)
+        loaded = index_store.load_current(root)
+        if loaded is None:  # nothing published yet — an empty corpus, not an error
+            _index, _chunks, _bm25, _version = index_store.build_faiss(
+                np.zeros((0, 384), dtype=np.float32)
+            ), [], None, None
+            return
+        _index, _chunks, version = loaded
+        _bm25 = index_store.load_bm25(version, root)
+        _version = version
 
-            index_dir = faiss_store.load_from_s3(Path("/tmp/index"))
-        _index, _chunks = faiss_store.load(index_dir)
-        _bm25 = bm25_store.load(index_dir)
+
+def _visible_rows(owner_id: str, doc_id: str | None) -> set[int] | None:
+    """Row ids this caller is allowed to see.
+
+    Returns None when no filtering is needed (no rows are excluded), so the
+    common unscoped path stays allocation-free.
+
+    Two independent restrictions apply:
+      * tenant isolation — a chunk is only visible to the user who owns the
+        document it came from. This is enforced here, at retrieval, rather
+        than only at the API edge, so no future caller can bypass it.
+      * document scope — when the client asks about one document, matching is
+        on EXACT document_id. The previous `startswith` test meant one
+        document id that happened to prefix another silently widened the
+        scope to both.
+    """
+    if doc_id is None and not owner_id:
+        return None
+    rows = set()
+    for i, chunk in enumerate(_chunks):
+        # Chunks written before owner tracking have owner_id="" and are treated
+        # as shared corpus (the seeded demo documents), visible to everyone.
+        if chunk.owner_id and owner_id and chunk.owner_id != owner_id:
+            continue
+        if doc_id is not None and chunk.doc_id != doc_id:
+            continue
+        rows.add(i)
+    return rows
 
 
 def retriever_node(state: AgentState) -> AgentState:
@@ -102,19 +141,29 @@ def retriever_node(state: AgentState) -> AgentState:
     t0 = time.perf_counter()
     _ensure_loaded()
 
-    # Scope to one uploaded document when the caller asks. The index is shared
-    # across all documents, so without this a vague question can match a
-    # different document than the one the user just uploaded. When scoping, pull
-    # the whole candidate space and filter, so a small document is fully covered.
     doc_id = state.get("doc_id")
-    cand = _index.ntotal if doc_id else settings.candidates_per_retriever
+    owner_id = state.get("user_id", "")
+    allowed = _visible_rows(owner_id, doc_id)
+
+    # When scoping/filtering, pull the whole candidate space before filtering so
+    # a small document is fully covered rather than being crowded out of a
+    # globally-ranked top-N by a larger corpus.
+    cand = _index.ntotal if allowed is not None else settings.candidates_per_retriever
+
+    if _index.ntotal == 0 or (allowed is not None and not allowed):
+        state["retrieved"] = []
+        state["trace"].record_step(
+            "retriever", int((time.perf_counter() - t0) * 1000), chunks=0, scope=doc_id or "all"
+        )
+        return state
 
     qvec = embeddings.embed_texts([state["query"]])[0]
-    dense = [row for row, _ in faiss_store.search(_index, qvec, cand)]
+    dense = [row for row, _ in index_store.search(_index, qvec, cand)]
     sparse = [row for row, _ in bm25_store.search(_bm25, state["query"], cand)]
-    if doc_id:
-        dense = [r for r in dense if _chunks[r].doc_id.startswith(doc_id)]
-        sparse = [r for r in sparse if _chunks[r].doc_id.startswith(doc_id)]
+    if allowed is not None:
+        dense = [r for r in dense if r in allowed]
+        sparse = [r for r in sparse if r in allowed]
+
     fused = bm25_store.rrf_fuse([dense, sparse], k=settings.rrf_k, top_k=settings.top_k)
     ranked_rows = [row for row, _ in fused]
     reranked = _rerank_candidates(
@@ -128,6 +177,10 @@ def retriever_node(state: AgentState) -> AgentState:
 
     duration_ms = int((time.perf_counter() - t0) * 1000)
     state["trace"].record_step(
-        "retriever", duration_ms, chunks=len(state["retrieved"]), scope=doc_id or "all"
+        "retriever",
+        duration_ms,
+        chunks=len(state["retrieved"]),
+        scope=doc_id or "all",
+        index_version=_version or "none",
     )
     return state

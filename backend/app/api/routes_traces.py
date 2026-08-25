@@ -11,7 +11,7 @@ router = APIRouter()
 
 
 @router.get("/traces/{trace_id}")
-def get_one(trace_id: str, user: dict[str, Any] = Depends(resolve_user)) -> dict:
+def get_one(trace_id: str, user: dict[str, Any] = Depends(resolve_user)) -> dict[str, Any]:
     record = get_trace(trace_id)
     if record is None:
         raise HTTPException(status_code=404, detail="trace not found")
@@ -21,7 +21,9 @@ def get_one(trace_id: str, user: dict[str, Any] = Depends(resolve_user)) -> dict
 
 
 @router.get("/traces")
-def get_many(limit: int = 20, user: dict[str, Any] = Depends(resolve_user)) -> list[dict]:
+def get_many(
+    limit: int = 20, user: dict[str, Any] = Depends(resolve_user)
+) -> list[dict[str, Any]]:
     if not user.get("is_admin"):
         raise HTTPException(status_code=403, detail="admin only")
     return list_traces(limit=min(limit, 100))

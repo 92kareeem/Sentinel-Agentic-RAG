@@ -8,7 +8,7 @@ auditor reads one function to see every gate a query passes through.
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.agents.graph import build_graph
 from app.agents.state import AgentState
@@ -33,7 +33,7 @@ _logger = get_logger()
 _graph = None  # compiled once per process, reused across warm invocations
 
 
-def _get_graph():
+def _get_graph() -> Any:
     global _graph
     if _graph is None:
         _graph = build_graph()
@@ -50,6 +50,24 @@ def query(
     scrubbed = pii.scrub(req.query)                         # 4. before logs/Groq
     quota.check_quota(user)                                 # 5. 429
     budget = cost_governor.allocate_budget()                # 6. hard caps
+
+    # 7. document scope authorization. A doc_id is a client-supplied string;
+    # without this check a caller could scope a query to another tenant's
+    # document id and read its content back through the answer. Retrieval also
+    # filters by owner (defense in depth), but the request is rejected here so
+    # the caller gets a clear 404 rather than a confusing empty refusal.
+    if req.doc_id is not None:
+        from app.documents import registry
+        from app.models.schemas import DocumentStatus
+
+        record = registry.get(req.doc_id, owner_id=str(user["user_id"]))
+        if record is None:
+            raise HTTPException(status_code=404, detail="document not found")
+        if record.status != DocumentStatus.INDEXED:
+            raise HTTPException(
+                status_code=409,
+                detail=f"document is not queryable yet (status: {record.status.value})",
+            )
 
     settings = get_settings()
     trace = TraceRecorder(user_id=str(user["user_id"]), query_redacted=scrubbed)
