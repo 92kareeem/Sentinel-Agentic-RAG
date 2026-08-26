@@ -15,7 +15,7 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
-from app.models.schemas import Chunk
+from app.models.schemas import Chunk, ChunkType
 
 Offsets = Callable[[str], list[tuple[int, int]]]
 
@@ -125,87 +125,145 @@ def _window_prose(
 # ---------------------------------------------------------------- public API
 
 
-def chunk_text(doc_id: str, text: str, tokenize: Offsets, size: int, overlap: int) -> list[Chunk]:
-    """Chunk one parsed (markdown-ish) document into Chunk records."""
+def _page_index(text: str) -> list[tuple[int, int]]:
+    """Build [(char_offset, page_number)] from the extractor's page markers,
+    so any character offset can be mapped back to the page it came from."""
+    from app.rag.pdf import PAGE_MARKER_RE
+
+    return [(m.start(), int(m.group(1))) for m in PAGE_MARKER_RE.finditer(text)]
+
+
+def _strip_page_markers(text: str) -> str:
+    """Remove page markers from user-visible chunk text.
+
+    Markers exist only to carry page numbers from the extractor to the chunker;
+    leaving them in would put "<<<SENTINEL_PAGE:3>>>" into embeddings, LLM
+    context and quoted citations.
+    """
+    from app.rag.pdf import PAGE_MARKER_RE
+
+    return PAGE_MARKER_RE.sub("", text).strip()
+
+
+def _page_for_offset(page_marks: list[tuple[int, int]], offset: int) -> int | None:
+    """Page number covering a char offset (the last marker at or before it)."""
+    if not page_marks:
+        return None
+    page = page_marks[0][1]
+    for mark_offset, mark_page in page_marks:
+        if mark_offset > offset:
+            break
+        page = mark_page
+    return page
+
+
+def chunk_text(
+    doc_id: str,
+    text: str,
+    tokenize: Offsets,
+    size: int,
+    overlap: int,
+    *,
+    owner_id: str = "",
+    source_filename: str = "",
+    max_chunks: int | None = None,
+) -> list[Chunk]:
+    """Chunk one parsed (markdown-ish) document into Chunk records.
+
+    doc_id is passed in by the caller and is the server-generated document
+    identity — it is never derived from the filename here, because filenames
+    are neither unique across users nor stable across re-uploads.
+    """
+    page_marks = _page_index(text)
     chunks: list[Chunk] = []
-    for s_idx, (path, body, s_off) in enumerate(_split_sections(text)):
+
+    for s_idx, (section_path, body, s_off) in enumerate(_split_sections(text)):
         c_idx = 0
         for block_text, is_table, b_off in _split_blocks(body):
             base = s_off + b_off
+            page = _page_for_offset(page_marks, base)
+
             if is_table:  # tables are atomic regardless of size
+                spans = [(base, base + len(block_text), len(tokenize(block_text)))]
+                texts = [block_text.strip()]
+            else:
+                offs = tokenize(block_text)
+                windows = _window_prose(block_text, offs, size, overlap)
+                spans = [(base + s, base + e, n) for s, e, n in windows]
+                texts = [block_text[s:e].strip() for s, e, _ in windows]
+
+            for (start, end, tokens), raw in zip(spans, texts, strict=True):
+                body_text = _strip_page_markers(raw)
+                if not body_text:  # a marker-only block strips to nothing
+                    continue
                 chunks.append(
                     Chunk(
-                        chunk_id=f"{doc_id}_s{s_idx}_c{c_idx}",
+                        # page is part of the id so re-chunking a document whose
+                        # page layout changed can't silently reuse a stale id
+                        chunk_id=f"{doc_id}_p{page or 0}_s{s_idx}_c{c_idx}",
                         doc_id=doc_id,
-                        section_path=path,
-                        text=block_text.strip(),
-                        is_table=True,
-                        token_count=len(tokenize(block_text)),
-                        char_start=base,
-                        char_end=base + len(block_text),
+                        owner_id=owner_id,
+                        section_path=section_path,
+                        text=body_text,
+                        is_table=is_table,
+                        chunk_type=ChunkType.TABLE if is_table else ChunkType.PROSE,
+                        page_number=page,
+                        source_filename=source_filename,
+                        token_count=tokens,
+                        char_start=start,
+                        char_end=end,
                     )
                 )
                 c_idx += 1
-                continue
-            offs = tokenize(block_text)
-            for c_start, c_end, n_tok in _window_prose(block_text, offs, size, overlap):
-                chunks.append(
-                    Chunk(
-                        chunk_id=f"{doc_id}_s{s_idx}_c{c_idx}",
-                        doc_id=doc_id,
-                        section_path=path,
-                        text=block_text[c_start:c_end].strip(),
-                        is_table=False,
-                        token_count=n_tok,
-                        char_start=base + c_start,
-                        char_end=base + c_end,
-                    )
-                )
-                c_idx += 1
+                if max_chunks is not None and len(chunks) >= max_chunks:
+                    return chunks[:max_chunks]
     return chunks
 
 
 def pdf_to_markdown(path: Path) -> str:
-    """Extract PDF text as pseudo-markdown using a font-size heading heuristic.
+    """Extract a PDF as page-marked markdown.
 
-    Spans noticeably larger than the document's median font size become
-    headings (bigger = higher level). Best-effort: PDFs without size variation
-    degrade gracefully to one flat section.
+    Delegates to rag/pdf.py, which handles reading order, running headers and
+    footers, tables, and — importantly — raises PdfExtractionError for
+    encrypted/scanned/corrupt input instead of returning "" for the caller to
+    index as a successful empty document.
     """
-    import fitz  # pymupdf; imported lazily so md/txt ingestion needs no PDF dep loaded
+    from app.rag.pdf import blocks_to_markdown, extract_pdf
 
-    doc = fitz.open(path)
-    sized_lines: list[tuple[float, str]] = []
-    for page in doc:
-        for block in page.get_text("dict")["blocks"]:
-            for line in block.get("lines", []):
-                spans = line.get("spans", [])
-                if not spans:
-                    continue
-                text = "".join(s["text"] for s in spans).strip()
-                if text:
-                    sized_lines.append((max(s["size"] for s in spans), text))
-    doc.close()
-    if not sized_lines:
-        return ""
-    sizes = sorted(s for s, _ in sized_lines)
-    median = sizes[len(sizes) // 2]
-    out: list[str] = []
-    for size, text in sized_lines:
-        if size >= median * 1.35 and len(text) < 120:
-            out.append(f"# {text}")
-        elif size >= median * 1.15 and len(text) < 120:
-            out.append(f"## {text}")
-        else:
-            out.append(text)
-    return "\n".join(out)
+    return blocks_to_markdown(extract_pdf(path))
 
 
-def chunk_file(path: Path, tokenize: Offsets, size: int, overlap: int) -> list[Chunk]:
-    """Chunk a .md/.txt/.pdf file. doc_id = slugified filename stem (stable)."""
-    doc_id = re.sub(r"[^a-z0-9]+", "-", path.stem.lower()).strip("-")
+def extract_document_text(path: Path) -> str:
+    """Parsed text for any supported file type, with page markers for PDFs."""
     if path.suffix.lower() == ".pdf":
-        text = pdf_to_markdown(path)
-    else:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    return chunk_text(doc_id, text, tokenize, size, overlap)
+        return pdf_to_markdown(path)
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def chunk_file(
+    path: Path,
+    tokenize: Offsets,
+    size: int,
+    overlap: int,
+    *,
+    doc_id: str,
+    owner_id: str = "",
+    source_filename: str = "",
+    max_chunks: int | None = None,
+) -> list[Chunk]:
+    """Chunk a .md/.txt/.pdf file under an explicit, caller-supplied doc_id.
+
+    doc_id is required: deriving it from the filename stem (the previous
+    behavior) meant two users uploading "policy.pdf" shared one identity and
+    silently overwrote each other's chunks in the index.
+    """
+    return chunk_text(
+        doc_id,
+        extract_document_text(path),
+        tokenize,
+        size,
+        overlap,
+        owner_id=owner_id,
+        source_filename=source_filename or path.name,
+        max_chunks=max_chunks,
+    )

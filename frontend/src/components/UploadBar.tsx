@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { ApiError, uploadDocument } from "../api";
+import { DOCUMENT_ERROR_HELP } from "../types";
 
 interface Props {
   onIndexed: (filename: string, chunks: number, docId: string) => void;
@@ -27,8 +28,14 @@ export function UploadBar({ onIndexed }: Props) {
       setStatus({ kind: "done", msg: `Indexed ${result.chunks_indexed} chunks from ${file.name}` });
       onIndexed(file.name, result.chunks_indexed, result.doc_id);
     } catch (err) {
-      const msg =
-        err instanceof ApiError ? `${err.status}: ${err.detail}` : "Upload failed — try again";
+      // Prefer the actionable explanation for a known ingestion failure
+      // ("this is a scanned PDF, Sentinel does not run OCR") over the raw
+      // status line, which tells the user nothing they can act on.
+      let msg = "Upload failed — try again";
+      if (err instanceof ApiError) {
+        const help = err.errorCode ? DOCUMENT_ERROR_HELP[err.errorCode] : undefined;
+        msg = help ?? err.detail ?? msg;
+      }
       setStatus({ kind: "error", msg });
     }
   };

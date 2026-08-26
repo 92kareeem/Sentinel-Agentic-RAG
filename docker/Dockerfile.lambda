@@ -7,9 +7,22 @@ FROM public.ecr.aws/lambda/python:3.12
 COPY docker/requirements-lambda.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-# app code (imported as app.*) and the baked embedding model
+# Fetch the quantized MiniLM at build time rather than COPYing models/onnx/,
+# which is gitignored (23 MB binary) and therefore absent from a fresh clone —
+# the image previously could not be built from a clean checkout at all. Pinned
+# by revision so the image stays reproducible and cannot silently change model.
+ARG ONNX_REPO=Xenova/all-MiniLM-L6-v2
+ARG ONNX_REVISION=main
+RUN pip install --no-cache-dir "huggingface-hub~=0.26" \
+ && python -c "\
+from huggingface_hub import hf_hub_download; import shutil, os;\
+os.makedirs('/opt/onnx', exist_ok=True);\
+[shutil.copyfile(hf_hub_download('${ONNX_REPO}', r, revision='${ONNX_REVISION}'), f'/opt/onnx/{n}')\
+ for r, n in [('onnx/model_quantized.onnx','model_quantized.onnx'), ('tokenizer.json','tokenizer.json')]]" \
+ && pip uninstall -y huggingface-hub
+
+# app code (imported as app.*)
 COPY backend/app ${LAMBDA_TASK_ROOT}/app
-COPY models/onnx /opt/onnx
 
 ENV EMBED_BACKEND=onnx \
     ONNX_MODEL_DIR=/opt/onnx \

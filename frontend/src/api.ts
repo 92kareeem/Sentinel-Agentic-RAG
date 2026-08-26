@@ -2,7 +2,7 @@
 // the key here is the DEMO key only (quota-limited server-side, rotatable).
 // The admin key must never appear in this codebase.
 
-import type { ConversationTurn, QueryResult, TraceRecord } from "./types";
+import type { ConversationTurn, DocumentSummary, QueryResult, TraceRecord } from "./types";
 
 const BASE = import.meta.env.VITE_API_BASE as string;
 const KEY = import.meta.env.VITE_API_KEY as string;
@@ -12,9 +12,22 @@ export class ApiError extends Error {
     public status: number,
     public detail: string,
     public retryAfter?: string,
+    // Set for ingestion rejections, which return a machine-readable reason so
+    // the UI can explain what to do rather than showing a generic failure.
+    public errorCode?: string,
   ) {
     super(detail);
   }
+}
+
+// FastAPI puts our structured ingestion errors in `detail`; everything else
+// sends a plain string. Normalizes both into (message, code).
+function parseDetail(body: unknown, fallback: string): { message: string; code?: string } {
+  const problem = body as { detail?: string; title?: string; error_code?: string } | null;
+  return {
+    message: problem?.detail ?? problem?.title ?? fallback,
+    code: problem?.error_code ?? undefined,
+  };
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -28,10 +41,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({ detail: resp.statusText }));
+    const { message, code } = parseDetail(body, "request failed");
     throw new ApiError(
       resp.status,
-      body.detail ?? body.title ?? "request failed",
+      message,
       resp.headers.get("retry-after") ?? undefined,
+      code,
     );
   }
   return resp.json() as Promise<T>;
@@ -93,10 +108,9 @@ async function uploadViaS3(file: File, onStage?: (stage: string) => void): Promi
   if (!s3resp.ok) throw new ApiError(s3resp.status, "S3 upload rejected the file");
 
   onStage?.("Indexing (chunk + embed)…");
-  return request<IndexResult>(
-    `/v1/documents/${ticket.doc_id}/index?filename=${encodeURIComponent(ticket.filename)}`,
-    { method: "POST" },
-  );
+  // The filename is no longer passed: the server rebuilds the S3 key from the
+  // registry, so a client cannot point indexing at another user's object.
+  return request<IndexResult>(`/v1/documents/${ticket.doc_id}/index`, { method: "POST" });
 }
 
 // Single-step upload (local dev): no S3, the API chunks + embeds directly.
@@ -111,7 +125,8 @@ async function uploadLocal(file: File, onStage?: (stage: string) => void): Promi
   });
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new ApiError(resp.status, body.detail ?? "upload failed");
+    const { message, code } = parseDetail(body, "upload failed");
+    throw new ApiError(resp.status, message, undefined, code);
   }
   return resp.json() as Promise<IndexResult>;
 }
@@ -123,4 +138,18 @@ export function uploadDocument(
   onStage?: (stage: string) => void,
 ): Promise<IndexResult> {
   return IS_LOCAL_API ? uploadLocal(file, onStage) : uploadViaS3(file, onStage);
+}
+
+// ---------------------------------------------------------------- documents
+
+export function listDocuments(): Promise<DocumentSummary[]> {
+  return request<DocumentSummary[]>("/v1/documents");
+}
+
+export function getDocument(documentId: string): Promise<DocumentSummary> {
+  return request<DocumentSummary>(`/v1/documents/${documentId}`);
+}
+
+export function deleteDocument(documentId: string): Promise<DocumentSummary> {
+  return request<DocumentSummary>(`/v1/documents/${documentId}`, { method: "DELETE" });
 }

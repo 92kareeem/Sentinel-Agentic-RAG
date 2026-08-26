@@ -33,7 +33,16 @@ class Settings(BaseSettings):
     top_k: int = 5  # kept low: Groq free-tier caps at 8k tokens/min, a repair loop can burn it fast
     candidates_per_retriever: int = 20
     rrf_k: int = 60
-    max_upload_bytes: int = 1024 * 1024  # 1 MB per document (S3-enforced); free-tier safe
+    max_upload_bytes: int = 1024 * 1024  # 1 MB per document; authoritative limit
+
+    # --- PDF ingestion limits (a 1 MB file is NOT a bound on work: a small,
+    # highly-compressed PDF can still hold hundreds of pages) ---
+    max_pdf_pages: int = 200
+    max_chunks_per_document: int = 2_000
+    # Below this many extractable characters per page on average, a PDF is
+    # treated as image-only/scanned rather than silently indexed as empty.
+    min_chars_per_page_for_text_pdf: int = 32
+    parser_version: str = "pdf-v2"
 
     # --- agent hard caps ---
     token_budget: int = 10_000
@@ -51,6 +60,7 @@ class Settings(BaseSettings):
     ddb_table_users: str = "sentinel-users"
     ddb_table_quotas: str = "sentinel-quotas"
     ddb_table_traces: str = "sentinel-traces"
+    ddb_table_documents: str = "sentinel-documents"
     use_s3_index: bool = False
     # True on laptops: auth/quota/traces use in-memory fixtures instead of DynamoDB
     local_mode: bool = True

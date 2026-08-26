@@ -9,6 +9,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -17,8 +18,8 @@ class TraceRecorder:
     user_id: str = "local"
     query_redacted: str = ""
     model_path: list[str] = field(default_factory=list)
-    steps: list[dict] = field(default_factory=list)
-    critic_scores: list[dict] = field(default_factory=list)
+    steps: list[dict[str, Any]] = field(default_factory=list)
+    critic_scores: list[dict[str, float]] = field(default_factory=list)
     repair_count: int = 0
     _t0: float = field(default_factory=time.monotonic)
 
@@ -39,7 +40,7 @@ class TraceRecorder:
     def total_tokens(self) -> int:
         return sum(s["tokens_in"] + s["tokens_out"] for s in self.steps)
 
-    def to_dict(self, final_status: str) -> dict:
+    def to_dict(self, final_status: str) -> dict[str, Any]:
         return {
             "trace_id": self.trace_id,
             "user_id": self.user_id,
@@ -61,10 +62,10 @@ class TraceRecorder:
 # Single PutItem at request end (never partial mid-request writes).
 # local_mode keeps traces in memory so the API works on a laptop.
 
-_local_traces: dict[str, dict] = {}
+_local_traces: dict[str, dict[str, Any]] = {}
 
 
-def put_trace(record: dict) -> None:
+def put_trace(record: dict[str, Any]) -> None:
     from app.config import get_settings
 
     settings = get_settings()
@@ -82,7 +83,7 @@ def put_trace(record: dict) -> None:
     table.put_item(Item=_to_ddb(record))
 
 
-def get_trace(trace_id: str) -> dict | None:
+def get_trace(trace_id: str) -> dict[str, Any] | None:
     from app.config import get_settings
 
     settings = get_settings()
@@ -93,10 +94,11 @@ def get_trace(trace_id: str) -> dict | None:
     table = boto3.resource("dynamodb", region_name=settings.aws_region).Table(
         settings.ddb_table_traces
     )
-    return table.get_item(Key={"trace_id": trace_id}).get("Item")
+    item: dict[str, Any] | None = table.get_item(Key={"trace_id": trace_id}).get("Item")
+    return item
 
 
-def list_traces(limit: int = 20) -> list[dict]:
+def list_traces(limit: int = 20) -> list[dict[str, Any]]:
     from app.config import get_settings
 
     settings = get_settings()
@@ -107,7 +109,8 @@ def list_traces(limit: int = 20) -> list[dict]:
     table = boto3.resource("dynamodb", region_name=settings.aws_region).Table(
         settings.ddb_table_traces
     )
-    return table.scan(Limit=limit).get("Items", [])
+    items: list[dict[str, Any]] = table.scan(Limit=limit).get("Items", [])
+    return items
 
 
 def _to_ddb(obj: object) -> object:

@@ -7,15 +7,24 @@ interface Props {
 
 export function CitationDrawer({ citation, onClose }: Props) {
   if (!citation) return null;
-  const docName = citation.chunk_id.split("_")[0];
+
+  // Show real provenance. This previously derived a "document name" from the
+  // chunk_id prefix, which is now a server-generated uuid and means nothing to
+  // a reader — the filename and page come from the chunk's own metadata.
+  const docName = citation.source_filename || citation.document_id || "Source document";
+  const page = citation.page_number != null ? `Page ${citation.page_number}` : null;
+
   return (
-    <aside className="drawer">
+    <aside className="drawer" role="complementary" aria-label="Citation source">
       <header>
         <div>
           <div className="drawer-doc">{docName}</div>
-          <div className="drawer-path">{citation.section_path}</div>
+          <div className="drawer-path">
+            {citation.section_path}
+            {page && <span className="drawer-page"> · {page}</span>}
+          </div>
         </div>
-        <button className="drawer-close" onClick={onClose}>
+        <button className="drawer-close" onClick={onClose} aria-label="Close citation">
           ×
         </button>
       </header>

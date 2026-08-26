@@ -21,9 +21,24 @@ def tokenize(text: str) -> list[str]:
     return _WORD_RE.findall(text.lower())
 
 
+class _EmptyBM25:
+    """Stand-in for an index over zero documents.
+
+    rank_bm25's BM25Okapi divides by corpus size in its constructor, so an
+    empty corpus raises ZeroDivisionError. An empty corpus is a legitimate
+    state — it is what a fresh install has, and what deleting your last
+    document produces — so it must not crash ingestion or query.
+    """
+
+    def get_scores(self, _tokens: list[str]) -> list[float]:
+        return []
+
+
 def build(corpus_texts: list[str]) -> Any:
     from rank_bm25 import BM25Okapi  # lazy import, symmetry with faiss
 
+    if not corpus_texts:
+        return _EmptyBM25()
     return BM25Okapi([tokenize(t) for t in corpus_texts])
 
 

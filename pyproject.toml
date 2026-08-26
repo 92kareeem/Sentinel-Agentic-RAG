@@ -51,6 +51,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Header"]
 
 [tool.mypy]
+plugins = ["pydantic.mypy"]
 python_version = "3.12"
 strict = true
 ignore_missing_imports = true      # faiss/rank_bm25/fitz ship no type stubs

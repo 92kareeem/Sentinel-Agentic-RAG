@@ -22,7 +22,8 @@
         "arn:aws:dynamodb:ap-south-1:440744255230:table/sentinel-users/index/api_key_hash-index",
         "arn:aws:dynamodb:ap-south-1:440744255230:table/sentinel-quotas",
         "arn:aws:dynamodb:ap-south-1:440744255230:table/sentinel-traces",
-        "arn:aws:dynamodb:ap-south-1:440744255230:table/sentinel-traces/index/user_id-created_at-index"
+        "arn:aws:dynamodb:ap-south-1:440744255230:table/sentinel-traces/index/user_id-created_at-index",
+        "arn:aws:dynamodb:ap-south-1:440744255230:table/sentinel-documents"
       ]
     },
     {

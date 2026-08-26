@@ -17,27 +17,27 @@ export default function App() {
   const [citation, setCitation] = useState<Citation | null>(null);
   const [activeDoc, setActiveDoc] = useState<{ docId: string; filename: string } | null>(null);
   const [conversationHistory, setConversationHistory] = useState<ConversationTurn[]>([]);
-  const [streamedAnswer, setStreamedAnswer] = useState("");
-  const [isStreamingAnswer, setIsStreamingAnswer] = useState(false);
+  const [renderedAnswer, setRenderedAnswer] = useState("");
+  const [isRenderingAnswer, setIsRenderingAnswer] = useState(false);
 
   useEffect(() => {
     if (!result || isRefusal(result)) {
-      setIsStreamingAnswer(false);
+      setIsRenderingAnswer(false);
       return;
     }
 
     const target = result.answer;
     const chars = target.split("");
     let index = 0;
-    setStreamedAnswer("");
-    setIsStreamingAnswer(true);
+    setRenderedAnswer("");
+    setIsRenderingAnswer(true);
 
     const timer = window.setInterval(() => {
       index += 1;
-      setStreamedAnswer(chars.slice(0, index).join(""));
+      setRenderedAnswer(chars.slice(0, index).join(""));
       if (index >= chars.length) {
         window.clearInterval(timer);
-        setIsStreamingAnswer(false);
+        setIsRenderingAnswer(false);
       }
     }, 16);
 
@@ -51,8 +51,8 @@ export default function App() {
     setResult(null);
     setTrace(null);
     setCitation(null);
-    setStreamedAnswer("");
-    setIsStreamingAnswer(false);
+    setRenderedAnswer("");
+    setIsRenderingAnswer(false);
     try {
       const r = await postQuery(query, activeDoc?.docId, nextHistory);
       setResult(r);
@@ -130,10 +130,10 @@ export default function App() {
       {result && !isRefusal(result) && (
         <>
           <AnswerPanel
-            answer={streamedAnswer}
+            answer={renderedAnswer}
             citations={result.citations}
             onChipClick={setCitation}
-            isStreaming={isStreamingAnswer}
+            isRendering={isRenderingAnswer}
           />
           <ScoreBadge
             critic={result.critic}

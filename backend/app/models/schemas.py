@@ -5,19 +5,125 @@ once. FastAPI validates against these at the edge; frontend/src/types.ts mirrors
 them; nothing constructs ad-hoc dicts for API responses.
 """
 
+from enum import StrEnum
+
 from pydantic import BaseModel, Field
 
+# ---------------------------------------------------------------- documents
+
+
+class DocumentStatus(StrEnum):
+    """Explicit document lifecycle. The API never reports INDEXED unless the
+    document's chunks are actually queryable in a published index version."""
+
+    UPLOADING = "UPLOADING"  # registered, bytes not yet durably stored
+    UPLOADED = "UPLOADED"  # bytes stored, not yet parsed
+    PROCESSING = "PROCESSING"  # parse/chunk/embed/index in flight
+    INDEXED = "INDEXED"  # queryable
+    FAILED = "FAILED"  # terminal; see error_code/error_message
+    DELETED = "DELETED"  # tombstoned; chunks purged from the index
+
+
+class DocumentErrorCode(StrEnum):
+    """Machine-readable ingestion failure reasons.
+
+    These are surfaced to the frontend so it can explain WHY a document failed
+    rather than showing a generic error — the difference between "this PDF is
+    scanned images, try an OCR'd copy" and "something went wrong".
+    """
+
+    ENCRYPTED_DOCUMENT = "ENCRYPTED_DOCUMENT"
+    UNSUPPORTED_SCANNED_DOCUMENT = "UNSUPPORTED_SCANNED_DOCUMENT"
+    CORRUPT_DOCUMENT = "CORRUPT_DOCUMENT"
+    EMPTY_DOCUMENT = "EMPTY_DOCUMENT"
+    NO_EXTRACTABLE_TEXT = "NO_EXTRACTABLE_TEXT"
+    TOO_LARGE = "TOO_LARGE"
+    TOO_MANY_PAGES = "TOO_MANY_PAGES"
+    UNSUPPORTED_CONTENT_TYPE = "UNSUPPORTED_CONTENT_TYPE"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+
+
+class DocumentRecord(BaseModel):
+    """Canonical document identity and lifecycle state.
+
+    document_id is server-generated at upload and is the ONLY identity used
+    downstream. Filenames are user-controlled, non-unique across users and
+    across versions, and are therefore metadata only — never identity.
+    """
+
+    document_id: str
+    owner_id: str
+    original_filename: str
+    safe_filename: str
+    content_type: str
+    file_size: int
+    checksum_sha256: str
+    storage_key: str
+    status: DocumentStatus = DocumentStatus.UPLOADING
+    created_at: str
+    updated_at: str
+    page_count: int | None = None
+    chunk_count: int = 0
+    index_version: str | None = None
+    parser_version: str | None = None
+    embedding_model: str | None = None
+    error_code: DocumentErrorCode | None = None
+    error_message: str | None = None
+
+
+class DocumentSummary(BaseModel):
+    """Public projection of DocumentRecord — no storage_key (internal S3 layout
+    is not the client's business) and no owner_id (implied by the caller)."""
+
+    document_id: str
+    filename: str
+    status: DocumentStatus
+    file_size: int
+    page_count: int | None = None
+    chunk_count: int = 0
+    created_at: str
+    updated_at: str
+    error_code: DocumentErrorCode | None = None
+    error_message: str | None = None
+
+    @classmethod
+    def from_record(cls, record: DocumentRecord) -> "DocumentSummary":
+        return cls(
+            document_id=record.document_id,
+            filename=record.original_filename,
+            status=record.status,
+            file_size=record.file_size,
+            page_count=record.page_count,
+            chunk_count=record.chunk_count,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            error_code=record.error_code,
+            error_message=record.error_message,
+        )
+
+
 # ---------------------------------------------------------------- retrieval
+
+
+class ChunkType(StrEnum):
+    PROSE = "prose"
+    TABLE = "table"
+    HEADING = "heading"
+    LIST = "list"
 
 
 class Chunk(BaseModel):
     """One retrieval unit; the on-disk record shape of chunks.jsonl."""
 
-    chunk_id: str  # deterministic: "{doc_id}_s{section_idx}_c{chunk_idx}"
-    doc_id: str
+    chunk_id: str  # deterministic: "{doc_id}_p{page}_s{section_idx}_c{chunk_idx}"
+    doc_id: str  # == DocumentRecord.document_id (server-generated, never a filename)
+    owner_id: str = ""  # denormalized for retrieval-time tenant filtering
     section_path: str  # e.g. "Item 7 > Liquidity"
     text: str
     is_table: bool = False
+    chunk_type: ChunkType = ChunkType.PROSE
+    page_number: int | None = None  # 1-based; None for non-paginated sources
+    source_filename: str = ""
     token_count: int
     char_start: int
     char_end: int
@@ -32,6 +138,9 @@ class Citation(BaseModel):
     chunk_id: str
     section_path: str
     quote: str
+    page_number: int | None = None
+    source_filename: str = ""
+    document_id: str = ""
 
 
 # ---------------------------------------------------------------- /v1/query
@@ -134,7 +243,11 @@ class HealthResponse(BaseModel):
 
 
 class Problem(BaseModel):
-    """RFC 7807 error shape; every error response uses this, extended with trace_id."""
+    """RFC 7807 error shape; every error response uses this, extended with
+    trace_id and an optional machine-readable error_code (set for ingestion
+    failures so a client can explain the cause rather than echoing prose)."""
+
+    error_code: str | None = None
 
     type: str = "about:blank"
     title: str

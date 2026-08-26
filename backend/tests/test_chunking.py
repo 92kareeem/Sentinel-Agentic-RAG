@@ -29,7 +29,34 @@ def _chunks(size: int = 50, overlap: int = 10):
 def test_deterministic_ids() -> None:
     a, b = _chunks(), _chunks()
     assert [c.chunk_id for c in a] == [c.chunk_id for c in b]
-    assert a[0].chunk_id.startswith("policy_s")
+    # ids are namespaced by the caller-supplied document id, never a filename
+    assert all(c.chunk_id.startswith("policy_") for c in a)
+    assert all(c.doc_id == "policy" for c in a)
+
+
+def test_chunk_ids_are_namespaced_by_document_id() -> None:
+    """Two documents with identical content must not share chunk ids.
+
+    This is the regression guard for the old filename-derived identity: two
+    users uploading the same file produced colliding ids that overwrote each
+    other in the index.
+    """
+    a = chunk_text("doc-aaa", DOC, simple_word_offsets, 50, 10)
+    b = chunk_text("doc-bbb", DOC, simple_word_offsets, 50, 10)
+    assert {c.chunk_id for c in a}.isdisjoint({c.chunk_id for c in b})
+
+
+def test_owner_and_filename_are_carried_onto_chunks() -> None:
+    chunks = chunk_text(
+        "doc-1", DOC, simple_word_offsets, 50, 10, owner_id="user-7", source_filename="p.pdf"
+    )
+    assert all(c.owner_id == "user-7" for c in chunks)
+    assert all(c.source_filename == "p.pdf" for c in chunks)
+
+
+def test_max_chunks_is_enforced() -> None:
+    capped = chunk_text("doc-1", DOC, simple_word_offsets, 50, 10, max_chunks=3)
+    assert len(capped) == 3
 
 
 def test_table_is_atomic() -> None:

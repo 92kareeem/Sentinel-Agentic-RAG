@@ -6,6 +6,9 @@ lives in the conditional edges below, not scattered across node files — the
 whole self-healing state machine is readable in one place.
 """
 
+from collections.abc import Callable
+from typing import Any
+
 from langgraph.graph import END, StateGraph
 
 from app.agents import critic as critic_mod
@@ -44,7 +47,7 @@ def refusal_node(state: AgentState) -> AgentState:
     return state
 
 
-def _guard(next_node: str):
+def _guard(next_node: str) -> Callable[[AgentState], str]:
     """Route to refusal instead of next_node if the entering node hit a hard cap."""
 
     def _route(state: AgentState) -> str:
@@ -91,7 +94,7 @@ def _route_after_grounding(state: AgentState) -> str:
     return "refusal"
 
 
-def build_graph():
+def build_graph() -> Any:
     g = StateGraph(AgentState)
     g.add_node("router", router.router_node)
     g.add_node("retriever", retriever.retriever_node)
