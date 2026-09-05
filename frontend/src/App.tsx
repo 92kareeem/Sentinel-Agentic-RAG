@@ -1,152 +1,168 @@
-import { useEffect, useState } from "react";
-import { ApiError, getTrace, postQuery } from "./api";
-import { AnswerPanel } from "./components/AnswerPanel";
-import { CitationDrawer } from "./components/CitationDrawer";
-import { QueryBox } from "./components/QueryBox";
-import { ScoreBadge } from "./components/ScoreBadge";
-import { TraceTimeline } from "./components/TraceTimeline";
-import { UploadBar } from "./components/UploadBar";
-import type { Citation, ConversationTurn, QueryResult, TraceRecord } from "./types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ApiError, deleteDocument, getTrace, listDocuments, postQuery } from "./api";
+import { ChatThread } from "./components/ChatThread";
+import { Composer } from "./components/Composer";
+import { Header } from "./components/Header";
+import { Sidebar } from "./components/Sidebar";
+import { SourceDrawer } from "./components/SourceDrawer";
+import { UploadModal } from "./components/UploadModal";
+import type { ChatMessage, Citation, ConversationTurn, DocumentSummary, TraceRecord } from "./types";
 import { isRefusal } from "./types";
 
+function uid(): string {
+  return Math.random().toString(36).slice(2);
+}
+
 export default function App() {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<QueryResult | null>(null);
-  const [trace, setTrace] = useState<TraceRecord | null>(null);
+  const [documents, setDocuments] = useState<DocumentSummary[]>([]);
+  const [activeDocId, setActiveDocId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [traces, setTraces] = useState<Record<string, TraceRecord>>({});
   const [citation, setCitation] = useState<Citation | null>(null);
-  const [activeDoc, setActiveDoc] = useState<{ docId: string; filename: string } | null>(null);
-  const [conversationHistory, setConversationHistory] = useState<ConversationTurn[]>([]);
-  const [renderedAnswer, setRenderedAnswer] = useState("");
-  const [isRenderingAnswer, setIsRenderingAnswer] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const historyRef = useRef<ConversationTurn[]>([]);
+
+  const refreshDocuments = useCallback(async () => {
+    try {
+      setDocuments(await listDocuments());
+    } catch {
+      // Non-fatal: the chat still works even if the sidebar can't load.
+    }
+  }, []);
 
   useEffect(() => {
-    if (!result || isRefusal(result)) {
-      setIsRenderingAnswer(false);
-      return;
-    }
+    refreshDocuments();
+  }, [refreshDocuments]);
 
-    const target = result.answer;
-    const chars = target.split("");
-    let index = 0;
-    setRenderedAnswer("");
-    setIsRenderingAnswer(true);
+  // Poll while anything is still processing — the backend has no push
+  // channel for lifecycle transitions, so this is the only way the sidebar
+  // status can move from PROCESSING to INDEXED/FAILED on its own.
+  useEffect(() => {
+    const inFlight = documents.some((d) => d.status === "UPLOADING" || d.status === "UPLOADED" || d.status === "PROCESSING");
+    if (!inFlight) return;
+    const t = window.setInterval(refreshDocuments, 2000);
+    return () => window.clearInterval(t);
+  }, [documents, refreshDocuments]);
 
-    const timer = window.setInterval(() => {
-      index += 1;
-      setRenderedAnswer(chars.slice(0, index).join(""));
-      if (index >= chars.length) {
-        window.clearInterval(timer);
-        setIsRenderingAnswer(false);
-      }
-    }, 16);
-
-    return () => window.clearInterval(timer);
-  }, [result]);
+  const activeDoc = documents.find((d) => d.document_id === activeDocId) ?? null;
+  const scopeLabel = activeDoc ? `Answering from ${activeDoc.filename}` : "Asking across all documents";
 
   const ask = async (query: string) => {
-    const nextHistory = [...conversationHistory, { role: "user", content: query }];
+    const userMsg: ChatMessage = { id: uid(), role: "user", text: query };
+    const pendingMsg: ChatMessage = { id: uid(), role: "assistant", kind: "pending" };
+    setMessages((m) => [...m, userMsg, pendingMsg]);
     setLoading(true);
-    setError(null);
-    setResult(null);
-    setTrace(null);
-    setCitation(null);
-    setRenderedAnswer("");
-    setIsRenderingAnswer(false);
+
+    const nextHistory = [...historyRef.current, { role: "user", content: query }];
+
     try {
-      const r = await postQuery(query, activeDoc?.docId, nextHistory);
-      setResult(r);
-      setConversationHistory([
+      const r = await postQuery(query, activeDocId, nextHistory);
+      historyRef.current = [
         ...nextHistory,
-        {
-          role: "assistant",
-          content: isRefusal(r) ? r.reason : r.answer,
-        },
-      ]);
-      getTrace(r.trace_id).then(setTrace).catch(() => {});
+        { role: "assistant", content: isRefusal(r) ? r.reason : r.answer },
+      ];
+
+      const finalMsg: ChatMessage = isRefusal(r)
+        ? { id: pendingMsg.id, role: "assistant", kind: "refusal", reason: r.reason, traceId: r.trace_id }
+        : {
+            id: pendingMsg.id,
+            role: "assistant",
+            kind: "answer",
+            text: r.answer,
+            citations: r.citations,
+            critic: r.critic,
+            repairCount: r.repair_count,
+            model: r.model_used,
+            latencyMs: r.latency_ms,
+            traceId: r.trace_id,
+          };
+      setMessages((m) => m.map((msg) => (msg.id === pendingMsg.id ? finalMsg : msg)));
+
+      getTrace(r.trace_id)
+        .then((t) => setTraces((prev) => ({ ...prev, [r.trace_id]: t })))
+        .catch(() => {});
     } catch (e) {
+      let text = "Sentinel couldn't reach the server. Please try again.";
       if (e instanceof ApiError && e.status === 429) {
-        setError(
-          `Daily demo quota reached — resets ${
-            e.retryAfter ? `in ~${Math.ceil(Number(e.retryAfter) / 3600)}h` : "at midnight UTC"
-          }. Thanks for trying Sentinel!`,
-        );
+        text = `Daily demo quota reached — resets ${
+          e.retryAfter ? `in ~${Math.ceil(Number(e.retryAfter) / 3600)}h` : "at midnight UTC"
+        }. Thanks for trying Sentinel!`;
       } else if (e instanceof ApiError) {
-        setError(`${e.status}: ${e.detail}`);
-      } else {
-        setError("Network error — is the API reachable?");
+        text = e.detail || text;
       }
+      setMessages((m) =>
+        m.map((msg) => (msg.id === pendingMsg.id ? { id: pendingMsg.id, role: "assistant", kind: "error", message: text } : msg)),
+      );
     } finally {
       setLoading(false);
     }
   };
 
+  const onDelete = async (docId: string) => {
+    try {
+      await deleteDocument(docId);
+      if (activeDocId === docId) setActiveDocId(null);
+      refreshDocuments();
+    } catch {
+      // Surfacing this inline would need its own toast primitive; the
+      // sidebar simply keeps showing the document, which is an accurate
+      // reflection of "deletion did not take effect".
+    }
+  };
+
+  const newChat = () => {
+    setMessages([]);
+    setTraces({});
+    historyRef.current = [];
+  };
+
   return (
-    <main className="app">
-      <header className="masthead">
-        <h1>Sentinel</h1>
-        <p>Self-healing document Q&A — every sentence cited, every answer verified.</p>
-      </header>
-
-      <QueryBox loading={loading} onSubmit={ask} error={error} />
-
-      {conversationHistory.length > 0 && (
-        <section className="conversation-history">
-          <h3>Conversation context</h3>
-          <ul>
-            {conversationHistory.map((turn, idx) => (
-              <li key={`${turn.role}-${idx}`}>
-                <strong>{turn.role}:</strong> {turn.content}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      <UploadBar
-        onIndexed={(filename, _chunks, docId) => setActiveDoc({ docId, filename })}
+    <div className="shell">
+      <Header
+        onMenuClick={() => setSidebarOpen(true)}
+        onNewChat={newChat}
+        hasMessages={messages.length > 0}
       />
-      {activeDoc && (
-        <div className="scope">
-          <span>
-            Answering from <b>{activeDoc.filename}</b>
-          </span>
-          <button className="scope-clear" onClick={() => setActiveDoc(null)}>
-            Ask across all documents
-          </button>
-        </div>
-      )}
 
-      {result && isRefusal(result) && (
-        <section className="refusal">
-          <h3>Sentinel declined to answer</h3>
-          <p>{result.reason === "INSUFFICIENT_CONTEXT"
-            ? "The indexed documents don't contain enough information for a grounded answer."
-            : result.reason}</p>
-          <span className="trace-id">trace: {result.trace_id}</span>
-        </section>
-      )}
+      <div className="body">
+        <Sidebar
+          documents={documents}
+          activeDocId={activeDocId}
+          onSelect={(id) => {
+            setActiveDocId(id);
+            setSidebarOpen(false);
+          }}
+          onUploadClick={() => setUploadOpen(true)}
+          onDelete={onDelete}
+          open={sidebarOpen}
+          onCloseMobile={() => setSidebarOpen(false)}
+        />
 
-      {result && !isRefusal(result) && (
-        <>
-          <AnswerPanel
-            answer={renderedAnswer}
-            citations={result.citations}
-            onChipClick={setCitation}
-            isRendering={isRenderingAnswer}
+        <main className="chat-pane">
+          <ChatThread
+            messages={messages}
+            traces={traces}
+            onCiteClick={setCitation}
+            hasDocuments={documents.some((d) => d.status !== "DELETED")}
+            onExample={ask}
           />
-          <ScoreBadge
-            critic={result.critic}
-            repairCount={result.repair_count}
-            model={result.model_used}
-            latencyMs={result.latency_ms}
-          />
-          {trace && <TraceTimeline steps={trace.steps} />}
-          <span className="trace-id">trace: {result.trace_id}</span>
-        </>
+          <Composer loading={loading} onSubmit={ask} scopeLabel={scopeLabel} />
+        </main>
+      </div>
+
+      {uploadOpen && (
+        <UploadModal
+          onClose={() => setUploadOpen(false)}
+          onUploaded={() => {
+            setUploadOpen(false);
+            refreshDocuments();
+          }}
+        />
       )}
 
-      <CitationDrawer citation={citation} onClose={() => setCitation(null)} />
-    </main>
+      <SourceDrawer citation={citation} onClose={() => setCitation(null)} />
+    </div>
   );
 }

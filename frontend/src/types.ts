@@ -103,3 +103,34 @@ export type QueryResult = QueryResponse | RefusalResponse;
 export function isRefusal(r: QueryResult): r is RefusalResponse {
   return (r as RefusalResponse).refusal === true;
 }
+
+// ---------------------------------------------------------------- chat UI
+//
+// Presentation-layer shape for one turn in the visible thread. Built purely
+// from QueryResult/RefusalResponse — no new backend fields. Keeping this
+// distinct from QueryResult means the chat renderer never has to branch on
+// `isRefusal` again once a message is constructed.
+
+export type ChatMessage =
+  | { id: string; role: "user"; text: string }
+  | {
+      id: string;
+      role: "assistant";
+      kind: "answer";
+      text: string;
+      citations: Citation[];
+      critic: CriticScores;
+      repairCount: number;
+      model: string;
+      latencyMs: number;
+      traceId: string;
+    }
+  | {
+      id: string;
+      role: "assistant";
+      kind: "refusal";
+      reason: string;
+      traceId: string;
+    }
+  | { id: string; role: "assistant"; kind: "pending" }
+  | { id: string; role: "assistant"; kind: "error"; message: string };
