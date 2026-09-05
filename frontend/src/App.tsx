@@ -6,11 +6,37 @@ import { Header } from "./components/Header";
 import { Sidebar } from "./components/Sidebar";
 import { SourceDrawer } from "./components/SourceDrawer";
 import { UploadModal } from "./components/UploadModal";
-import type { ChatMessage, Citation, ConversationTurn, DocumentSummary, TraceRecord } from "./types";
+import type {
+  ChatMessage,
+  Citation,
+  ConversationTurn,
+  DocumentSummary,
+  QueryResult,
+  TraceRecord,
+} from "./types";
 import { isRefusal } from "./types";
 
 function uid(): string {
   return Math.random().toString(36).slice(2);
+}
+
+const CITATION_TAG = /\s*\[chunk:[\w-]+\]/g;
+
+// What this turn should look like when it is sent back as conversation
+// history on the NEXT question.
+//
+// The raw response is the wrong thing to echo. A refusal's `reason` is the
+// literal control token "INSUFFICIENT_CONTEXT", and an answer is full of
+// [chunk:<id>] tags — feeding either back means the next prompt contains an
+// assistant turn that says something no human would say, spends tokens on
+// ids that are meaningless out of context, and invites the model to imitate
+// the tagging convention from history rather than from its instructions.
+//
+// History is background about what was discussed, never evidence, so a plain
+// readable sentence is exactly what belongs here.
+function historyTurnFor(r: QueryResult): string {
+  if (isRefusal(r)) return "I couldn't answer that from the available documents.";
+  return r.answer.replace(CITATION_TAG, "").trim();
 }
 
 export default function App() {
@@ -59,13 +85,17 @@ export default function App() {
 
     try {
       const r = await postQuery(query, activeDocId, nextHistory);
-      historyRef.current = [
-        ...nextHistory,
-        { role: "assistant", content: isRefusal(r) ? r.reason : r.answer },
-      ];
+      historyRef.current = [...nextHistory, { role: "assistant", content: historyTurnFor(r) }];
 
       const finalMsg: ChatMessage = isRefusal(r)
-        ? { id: pendingMsg.id, role: "assistant", kind: "refusal", reason: r.reason, traceId: r.trace_id }
+        ? {
+            id: pendingMsg.id,
+            role: "assistant",
+            kind: "refusal",
+            reason: r.reason,
+            reasonCode: r.reason_code ?? "INSUFFICIENT_EVIDENCE",
+            traceId: r.trace_id,
+          }
         : {
             id: pendingMsg.id,
             role: "assistant",

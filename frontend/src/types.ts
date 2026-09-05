@@ -70,12 +70,42 @@ export interface QueryResponse {
   latency_ms: number;
 }
 
+// Mirrors RefusalReason in schemas.py. A refusal is a successful outcome, but
+// these are not interchangeable: BUDGET_EXHAUSTED is retryable and says
+// nothing about whether the documents cover the question, so telling the user
+// "not in your documents" for it would send them to fix the wrong thing.
+export type RefusalReason =
+  | "INSUFFICIENT_EVIDENCE"
+  | "UNVERIFIABLE_ANSWER"
+  | "BUDGET_EXHAUSTED";
+
 export interface RefusalResponse {
   trace_id: string;
   refusal: true;
   reason: string;
+  reason_code?: RefusalReason; // optional: older backends don't send it
   best_effort_context: string[];
 }
+
+export const REFUSAL_COPY: Record<RefusalReason, { title: string; body: string; hint: string }> = {
+  INSUFFICIENT_EVIDENCE: {
+    title: "No supporting evidence found",
+    body: "I couldn't find information in your documents that answers this question.",
+    hint: "Try rephrasing, or upload a document that covers this topic.",
+  },
+  UNVERIFIABLE_ANSWER: {
+    title: "Couldn't verify an answer",
+    body:
+      "I found related material, but couldn't confirm an answer was fully supported by it — " +
+      "so I'm not going to guess.",
+    hint: "Try asking something more specific about the document.",
+  },
+  BUDGET_EXHAUSTED: {
+    title: "Ran out of time on this one",
+    body: "This question hit the processing limit before a verified answer was ready.",
+    hint: "Please try again — this is usually temporary.",
+  },
+};
 
 export interface TraceStep {
   name: string;
@@ -130,6 +160,7 @@ export type ChatMessage =
       role: "assistant";
       kind: "refusal";
       reason: string;
+      reasonCode: RefusalReason;
       traceId: string;
     }
   | { id: string; role: "assistant"; kind: "pending" }

@@ -1,8 +1,12 @@
 # Sentinel — Document Self-Healing Agentic RAG
 
-A guardrailed, self-healing retrieval-augmented generation platform. Built end-to-end and deployed on AWS free tier.
+A guardrailed, self-healing retrieval-augmented generation platform for document Q&A: every answer is cited to a page, and unverifiable answers are refused rather than guessed.
 
-**Stack:** FastAPI · LangGraph · Hybrid FAISS + BM25 (RRF) · Groq (`openai/gpt-oss-20b` routing/critic, `120b` escalation) · AWS Lambda + DynamoDB + S3 + CloudFront · pytest · GitHub Actions
+> **Verification status.** Local and CI paths are verified by the test suite and the eval
+> harness. The AWS deployment path in `infra/` is written and statically reviewed but has
+> **not** been executed end-to-end. See [Known limitations](#known-limitations).
+
+**Stack:** FastAPI · LangGraph · Hybrid FAISS + BM25 (RRF) · Groq (`openai/gpt-oss-20b` synthesis/critic, `120b` escalation) · AWS Lambda + DynamoDB + S3 + CloudFront · pytest · GitHub Actions
 
 ---
 
@@ -32,7 +36,9 @@ Sentinel wraps the pipeline in a LangGraph agent that grades its own output and 
                                 └─────────┘
 ```
 
-- **Router** — Groq 8B classifies query complexity and routes cheaply.
+- **Router** — a keyword heuristic selects the small or large model. It used to spend an
+  LLM call on this; measurement showed that call had never actually worked, and that
+  repairing it made quality *worse*. See [ADR 0002](docs/adr/0002-router-uses-a-heuristic-not-an-llm.md).
 - **Hybrid retriever** — FAISS (dense, IndexFlatIP) + BM25 (sparse) fused with Reciprocal Rank Fusion (k=60). Sparse recall for exact terms, dense recall for meaning.
 - **Synthesiser** — grounded strictly on retrieved chunks; document text is fenced and labelled untrusted so content inside an uploaded file cannot act as an instruction.
 - **Critic** — evaluates the answer against retrieved context. Faithfulness and relevance scored.
@@ -48,11 +54,11 @@ The point isn't the framework choices. The point is the platform grades itself, 
 
 - [x] Ingestion pipeline and hybrid index (`make ingest`)
 - [x] LangGraph agent: router → retriever → synthesiser → critic → grounding → repair → refusal
-- [x] FastAPI service, guardrail chain, 90-test suite (unit + HTTP contract + end-to-end)
+- [x] FastAPI service, guardrail chain, 122-test suite (unit + HTTP contract + adversarial + end-to-end)
 - [x] Document registry with explicit lifecycle, ownership and tenant isolation
 - [x] Page-aware PDF pipeline with typed failure modes (encrypted / scanned / corrupt)
-- [x] Atomic, versioned index publication safe under concurrent uploads
-- [x] AWS deploy: Lambda container, DynamoDB, S3, CloudFront (`infra/deploy.sh`)
+- [x] Atomic, versioned index publication (safe under concurrent uploads *within one process* — see limitations)
+- [ ] AWS deploy: Lambda container, DynamoDB, S3, CloudFront (`infra/deploy.sh`) — **written and reviewed, not yet executed**
 - [x] Evaluation harness (faithfulness / retrieval-hit / refusal-rate), GitHub Actions CI
 - [x] TypeScript frontend
 
@@ -67,11 +73,14 @@ These are deliberate scope boundaries, not oversights:
 - **Ingestion is synchronous.** Fine for the 1 MB / 200-page limit this targets. A
   durable queue (S3 event → SQS → worker) is the right shape beyond that; the
   previous in-process daemon thread was removed because Lambda freezes on return.
-- **Index publication is single-writer.** Concurrent uploads are serialized and
-  retried, which is correct but not high-throughput.
-- **Cross-process index locking is advisory** (compare-and-set on the version
-  pointer). Correct for one Lambda instance; multi-instance concurrent *writes*
-  need the DynamoDB-conditional lock described in `infra/aws_setup.md`.
+- **Index publication is single-writer, and that writer is process-local.** Concurrent
+  uploads within one process are serialized and retried correctly. Across *multiple*
+  Lambda instances the lock and the pointer compare-and-set do not see each other, so
+  two simultaneous writers can lose a document. This is the one open **correctness**
+  issue in the system; it needs a DynamoDB conditional-write lock.
+- **The browser holds an API key.** `VITE_API_KEY` is baked into the bundle and is
+  extractable by anyone who loads the page. Acceptable for local development and a
+  quota-limited demo; not acceptable as production authentication.
 
 ---
 
@@ -85,7 +94,9 @@ These are deliberate scope boundaries, not oversights:
 | Sparse retrieval             | BM25                                                  | Exact-term recall the dense index misses                               |
 | Fusion                       | Reciprocal Rank Fusion (k=60)                         | No score calibration needed across dense/sparse                        |
 | LLM provider                 | Groq                                                  | Fast inference, generous free tier                                     |
-| Small/large split            | `gpt-oss-20b` (router, critic) + `120b` (escalation)  | Most cost lives on the small model; escalate only when repair needs it |
+| Small/large split            | `gpt-oss-20b` (synthesis, critic) + `120b` (escalation) | Most cost lives on the small model; escalate only when repair needs it |
+| Query routing                | Keyword heuristic, no LLM call                        | Measured: the LLM classifier added latency and tokens, and cost a false refusal (ADR 0002) |
+| Refusal handling             | Short-circuited before the critic                     | Measured: repairing refusals *was* the p95 — 25.3s → 12.1s (ADR 0001) |
 | Serving                      | AWS Lambda container image behind API Gateway         | Cold start acceptable for demo; scales to zero; free tier              |
 | State                        | DynamoDB (traces, API keys)                           | Serverless, single-digit-ms reads, no schema migrations                |
 | Auth                         | API Gateway usage plans + hashed keys in DynamoDB     | Two layers of protection, no Cognito overhead                          |
