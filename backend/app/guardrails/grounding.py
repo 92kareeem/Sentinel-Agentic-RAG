@@ -10,7 +10,7 @@ is untrustworthy and is treated like a critic failure (repair or refuse).
 import re
 from dataclasses import dataclass
 
-from app.models.schemas import Chunk
+from app.models.schemas import Chunk, is_insufficient_context
 
 _CITATION_RE = re.compile(r"\[chunk:([\w-]+)\]")
 _NUMBER_RE = re.compile(r"\d[\d,]*\.?\d*")
@@ -112,7 +112,7 @@ def _split_cited_sentences(answer: str) -> list[tuple[str, str]]:
 
 
 def verify(answer: str, retrieved: list[Chunk]) -> GroundingResult:
-    if answer.strip() == "INSUFFICIENT_CONTEXT":
+    if is_insufficient_context(answer):
         return GroundingResult(answer, ok=True, stripped_ratio=0.0, valid_chunk_ids=[])
 
     by_id = {c.chunk_id: c for c in retrieved}

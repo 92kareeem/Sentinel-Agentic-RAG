@@ -5,9 +5,39 @@ once. FastAPI validates against these at the edge; frontend/src/types.ts mirrors
 them; nothing constructs ad-hoc dicts for API responses.
 """
 
+import re
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------- refusal sentinel
+
+# The exact token the synthesizer is instructed to emit when the evidence does
+# not support an answer. It is part of the contract between four modules
+# (synthesizer emits it, the graph routes on it, grounding exempts it, the API
+# converts it into a RefusalResponse), so it lives here rather than as a bare
+# string literal repeated in each of them.
+INSUFFICIENT_CONTEXT = "INSUFFICIENT_CONTEXT"
+
+_CITATION_TAG_RE = re.compile(r"\[chunk:[\w-]+\]")
+_INSUFFICIENT_RE = re.compile(rf"^[\s\W]*{INSUFFICIENT_CONTEXT}[\s\W]*$", re.IGNORECASE)
+
+
+def is_insufficient_context(answer: str) -> bool:
+    """Is this answer the refusal sentinel rather than a real answer?
+
+    Tolerant of the ways an LLM decorates a one-word instruction — a trailing
+    period, surrounding quotes, a citation tag appended out of habit, wrong
+    case. Exact `== "INSUFFICIENT_CONTEXT"` comparisons (what the callers used
+    to do independently) miss all of those, and a missed refusal is expensive:
+    it is scored by the critic, fails on relevance, and burns a full repair
+    round to re-derive the refusal the model already gave.
+
+    Still requires the sentinel to be the WHOLE answer, so a genuine answer
+    that merely mentions the token is not mistaken for a refusal.
+    """
+    return bool(_INSUFFICIENT_RE.match(_CITATION_TAG_RE.sub("", answer)))
+
 
 # ---------------------------------------------------------------- documents
 
@@ -181,10 +211,32 @@ class QueryResponse(BaseModel):
     latency_ms: int
 
 
+class RefusalReason(StrEnum):
+    """Why the agent declined, as a machine-readable code.
+
+    A refusal is a successful outcome, but not all refusals mean the same
+    thing to a user: "your documents don't cover this" calls for rephrasing or
+    uploading something else, while "this request ran out of budget" simply
+    calls for a retry. Collapsing both into one free-text string (which is what
+    `reason` was) made those indistinguishable to the UI.
+
+    Conditions detected BEFORE the graph runs stay as HTTP status codes rather
+    than appearing here — an unknown document is a 404 and a still-indexing one
+    a 409, because those are request errors, not agent outcomes.
+    """
+
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"  # retrieved text doesn't answer it
+    UNVERIFIABLE_ANSWER = "UNVERIFIABLE_ANSWER"  # drafted, but failed critic/grounding
+    BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"  # hit token/deadline/attempt cap first
+
+
 class RefusalResponse(BaseModel):
     trace_id: str
     refusal: bool = True
     reason: str
+    # Additive: existing clients keep reading `reason`. New clients switch on
+    # this instead of pattern-matching prose.
+    reason_code: RefusalReason = RefusalReason.INSUFFICIENT_EVIDENCE
     best_effort_context: list[str] = []  # chunk_ids we found but couldn't answer from
 
 

@@ -13,16 +13,20 @@ from langgraph.graph import END, StateGraph
 
 from app.agents import critic as critic_mod
 from app.agents import repair, retriever, router, synthesizer
+from app.agents.budget import check_budget
 from app.agents.state import AgentState
 from app.config import get_settings
+from app.models.schemas import RefusalReason, is_insufficient_context
 
 
 def grounding_check_node(state: AgentState) -> AgentState:
     """Deterministic grounding gate (guardrails/grounding.py).
 
-    Strips unsupported sentences; if >30% were stripped the answer is
-    untrustworthy — treated like a critic failure so the repair loop (or
-    refusal) takes over rather than shipping a hallucination-heavy answer.
+    Strips unsupported sentences; if more than MAX_STRIPPED_RATIO of them were
+    stripped the answer is untrustworthy — treated like a critic failure so the
+    repair loop (or refusal) takes over rather than shipping a
+    hallucination-heavy answer. (This docstring previously named a hardcoded
+    30%; the threshold is defined once in grounding.py and is currently 50%.)
     """
     from app.guardrails import grounding
 
@@ -41,7 +45,31 @@ def grounding_check_node(state: AgentState) -> AgentState:
 
 
 def refusal_node(state: AgentState) -> AgentState:
+    """Single funnel for every refusal, and the one place they are classified.
+
+    The reason is derived here from observable state rather than being threaded
+    through the six nodes that can trigger a refusal: each of those already
+    sets status="refused" and returns, and the conditions that distinguish the
+    cases are stable by the time this runs (a passed deadline stays passed, an
+    exhausted token budget stays exhausted). One classifier is easier to keep
+    correct than six assignment sites that must not drift apart.
+    """
     state["status"] = "refused"
+
+    if not check_budget(state):
+        # A hard cap fired before the graph could finish — the corpus may well
+        # contain the answer, so this must not be reported as "not in your
+        # documents". It is retryable; INSUFFICIENT_EVIDENCE is not.
+        state["refusal_reason"] = RefusalReason.BUDGET_EXHAUSTED
+    elif is_insufficient_context(state.get("answer", "")):
+        # The model read the evidence and said it doesn't answer the question.
+        state["refusal_reason"] = RefusalReason.INSUFFICIENT_EVIDENCE
+    else:
+        # An answer was drafted but could not be verified — it failed the
+        # critic or the grounding gate. Distinct from "no evidence": there WAS
+        # evidence, we just couldn't stand behind what was written from it.
+        state["refusal_reason"] = RefusalReason.UNVERIFIABLE_ANSWER
+
     if not state.get("answer"):
         state["answer"] = "I don't have enough verified context to answer this confidently."
     return state
@@ -65,6 +93,39 @@ def _can_afford_repair(state: AgentState) -> bool:
     quota on a call that could never finish. Route straight to refusal.
     """
     return state["token_budget_left"] >= get_settings().min_repair_token_reserve
+
+
+def _route_after_synthesizer(state: AgentState) -> str:
+    """Short-circuit an honest refusal instead of paying the repair loop for it.
+
+    When the synthesizer answers INSUFFICIENT_CONTEXT it has already reached
+    the correct outcome. Sending that to the critic guarantees a failure:
+    the critic scores `relevance = does the answer address the question?`, and
+    a refusal addresses nothing, so relevance ~ 0 routes it into repair. The
+    measured cost of that was the system's entire p95 — the three unanswerable
+    eval questions each ran 2 repairs and took ~25s against a p50 of ~9.5s, to
+    re-derive a refusal produced in the first round.
+
+    One rewrite is still allowed, because repair_rewrite reformulates the query
+    and RE-RUNS RETRIEVAL: "the evidence isn't here" may really mean "retrieval
+    missed it", and a second look can legitimately recover an answer. That is
+    the round worth paying for, and keeping it is why this change does not
+    trade latency for false refusals.
+
+    Escalation is never worth paying for here: repair_escalate only swaps in
+    the bigger model against the SAME evidence set. If the small model reports
+    the evidence doesn't contain the answer, a larger model reading identical
+    text will almost always agree — and in the rare case it disagrees, it has
+    talked itself into a claim the evidence didn't support, which is precisely
+    what this system exists to prevent.
+    """
+    if state["status"] == "refused":
+        return "refusal"
+    if not is_insufficient_context(state["answer"]):
+        return "critic"
+    if state["attempt"] == 0 and _can_afford_repair(state):
+        return "repair_rewrite"
+    return "refusal"
 
 
 def _route_after_critic(state: AgentState) -> str:
@@ -113,7 +174,13 @@ def build_graph() -> Any:
         "retriever", _guard("synthesizer"), {"synthesizer": "synthesizer", "refusal": "refusal"}
     )
     g.add_conditional_edges(
-        "synthesizer", _guard("critic"), {"critic": "critic", "refusal": "refusal"}
+        "synthesizer",
+        _route_after_synthesizer,
+        {
+            "critic": "critic",
+            "repair_rewrite": "repair_rewrite",
+            "refusal": "refusal",
+        },
     )
     g.add_conditional_edges(
         "critic",
