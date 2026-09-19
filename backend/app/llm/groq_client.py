@@ -98,6 +98,7 @@ def chat_completion(
     json_mode: bool = False,
     reasoning_effort: str = "low",
     deadline_ts: float | None = None,
+    max_retries: int | None = None,
 ) -> tuple[str, int, int]:
     """Call Groq chat completions. Returns (content, tokens_in, tokens_out).
 
@@ -111,6 +112,11 @@ def chat_completion(
     open-weight models (openai/gpt-oss-*) emit before the visible content —
     without this, short max_tokens budgets (router/critic) get exhausted by
     reasoning alone and return truncated or empty content.
+
+    max_retries is low by default because an interactive request has a person
+    waiting: more attempts only spend their patience. A batch caller that can
+    genuinely afford to wait out a rate limit (the eval harness) raises it,
+    and pairs it with a deadline so "wait" still has a bound.
 
     deadline_ts (time.monotonic) bounds the WHOLE call, retries and backoff
     sleeps included. Without it the graph's deadline was advisory: check_budget
@@ -138,7 +144,8 @@ def chat_completion(
         "Authorization": f"Bearer {settings.groq_api_key}",
         "Content-Type": "application/json",
     }
-    max_retries = 3
+    if max_retries is None:
+        max_retries = settings.llm_max_retries
     last_exc: Exception | None = None
 
     def _sleep_or_give_up(seconds: float) -> None:

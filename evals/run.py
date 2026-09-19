@@ -8,6 +8,7 @@ Exit code 1 if gates fail (mean faithfulness < 0.75 or unanswerable-refusal
 """
 
 import json
+import os
 import re
 import statistics
 import sys
@@ -16,11 +17,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
+# Set BEFORE app.config is imported: Settings is lru_cached, so a later change
+# would not be seen.
+#
+# The harness is a batch job on a free tier whose token bucket refills over a
+# minute. The interactive default (3 attempts) is tuned for a person waiting
+# and is not enough time for that bucket to refill, so a suite that is merely
+# SLOW reads as a suite that is BROKEN — measured: 14 of 17 answerable
+# questions "refused" in under 120 ms each. Waiting is the correct response to
+# a rate limit when nobody is waiting on you.
+os.environ.setdefault("LLM_MAX_RETRIES", "8")
+
 from app.agents.graph import build_graph  # noqa: E402
 from app.agents.state import AgentState  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.llm import groq_client  # noqa: E402
-from app.models.schemas import is_insufficient_context  # noqa: E402
+from app.models.schemas import RefusalReason, is_insufficient_context  # noqa: E402
 from app.observability.tracing import TraceRecorder  # noqa: E402
 from judge_prompts import (  # noqa: E402
     COMPLETENESS_PROMPT,
@@ -30,6 +42,25 @@ from judge_prompts import (  # noqa: E402
 
 GATE_FAITHFULNESS = 0.75
 GATE_REFUSAL = 2 / 3
+
+# The harness is a batch job. Nobody is waiting on any single answer, so it
+# does NOT inherit settings.deadline_seconds, which exists to stop a person
+# staring at a spinner. Applying an interactive deadline here makes the eval
+# report a provider rate limit as a quality regression — the one thing a gate
+# must never do.
+EVAL_DEADLINE_SECONDS = 600
+
+# Groq's free tier allows 8,000 tokens per minute. One question costs roughly
+# 1,500 across synthesis and grading, so firing twenty back to back is ~30,000
+# tokens inside a minute: the harness rate-limits ITSELF, and then reports the
+# damage as a drop in answer quality. Measured doing exactly that — 14 of 17
+# answerable questions "refused" in under 120 ms each, at a mean of 339
+# tokens/query against a normal 1,482.
+#
+# Pace to stay under the cap. A slow, trustworthy gate beats a fast one nobody
+# believes. Override with EVAL_PACING_SECONDS=0 when running against a paid
+# tier or a local model.
+EVAL_PACING_SECONDS = float(os.environ.get("EVAL_PACING_SECONDS", "12"))
 
 # Chunk ids gained a page segment ("doc_p2_s1_c0") when PDF extraction became
 # page-aware. The golden dataset records which SECTION should be retrieved, not
@@ -52,6 +83,13 @@ def _judge(system_prompt: str, user_content: str, key: str) -> float:
         ],
         max_tokens=300,  # headroom for gpt-oss's hidden reasoning tokens, see groq_client.py
         json_mode=True,
+        # Grading is the tail of a burst — the answer it grades has just spent
+        # the token bucket — so it is the call most likely to meet a 429, and
+        # the default three attempts with 1+2+4s of backoff is not enough time
+        # for a per-minute bucket to refill. Nobody is waiting on a batch job,
+        # so wait properly. The deadline keeps "wait" bounded.
+        max_retries=8,
+        deadline_ts=time.monotonic() + EVAL_DEADLINE_SECONDS,
     )
     return float(json.loads(content)[key])
 
@@ -92,7 +130,8 @@ def run_item(graph, item: dict) -> dict:
         "user_id": "eval", "doc_id": None, "trace": trace, "attempt": 0,
         "model": settings.groq_model_simple,
         "token_budget_left": settings.token_budget,
-        "deadline_ts": time.monotonic() + settings.deadline_seconds,
+        # Batch deadline, not the interactive one — see EVAL_DEADLINE_SECONDS.
+        "deadline_ts": time.monotonic() + EVAL_DEADLINE_SECONDS,
         "retrieved": [], "answer": "", "citations": [], "critic": None,
         "status": "running", "refusal_reason": None, "conversation_history": [],
     }
@@ -113,6 +152,22 @@ def run_item(graph, item: dict) -> dict:
         }
     latency_ms = int((time.perf_counter() - t0) * 1000)
 
+    if result.get("refusal_reason") == RefusalReason.BUDGET_EXHAUSTED:
+        # The graph ran out of wall clock or tokens. That is a statement about
+        # the provider and the budget, NOT about whether the documents answer
+        # the question — and scoring it as a false refusal is exactly the
+        # "quality regression that did not happen" this file already refuses
+        # to report for exceptions. The same reasoning has to cover refusals,
+        # because the deadline now surfaces as a clean BUDGET_EXHAUSTED rather
+        # than as a raised error.
+        return {
+            "id": item["id"], "category": item["category"],
+            "error": "BUDGET_EXHAUSTED — provider rate limit or deadline, not a quality signal",
+            "refused": False, "hit": None, "faithfulness": 0.0, "completeness": 0.0,
+            "latency_ms": latency_ms, "tokens": trace.total_tokens(),
+            "repairs": trace.repair_count, "answer": "",
+        }
+
     # Same helper the API uses, so the harness and production agree on what
     # counts as a refusal. A strict `== "INSUFFICIENT_CONTEXT"` here would miss
     # a decorated sentinel that the API correctly treats as a refusal, and the
@@ -130,10 +185,24 @@ def run_item(graph, item: dict) -> dict:
         faith = 0.3
         completeness = 0.0  # a false refusal answers nothing
     else:
-        faith = judge_faithfulness(item["question"], context, result["answer"])
-        completeness = judge_completeness(
-            item["question"], item["reference_answer"], result["answer"]
-        )
+        try:
+            faith = judge_faithfulness(item["question"], context, result["answer"])
+            completeness = judge_completeness(
+                item["question"], item["reference_answer"], result["answer"]
+            )
+        except Exception as exc:  # noqa: BLE001 — reported as "unmeasured"
+            # The ANSWER succeeded; only the grading of it failed. That costs
+            # one unmeasured question, never the run: an unhandled judge error
+            # used to abort main() entirely, so a single 429 at the wrong
+            # moment threw away nineteen perfectly good results and reported
+            # nothing at all.
+            return {
+                "id": item["id"], "category": item["category"],
+                "error": f"judge unavailable: {type(exc).__name__}: {exc}",
+                "refused": False, "hit": hit, "faithfulness": 0.0, "completeness": 0.0,
+                "latency_ms": latency_ms, "tokens": trace.total_tokens(),
+                "repairs": trace.repair_count, "answer": result["answer"][:120],
+            }
 
     return {
         "id": item["id"], "category": item["category"], "refused": refused,
@@ -150,7 +219,9 @@ def main() -> None:
     graph = build_graph()
 
     rows = []
-    for item in items:
+    for n, item in enumerate(items):
+        if n and EVAL_PACING_SECONDS:
+            time.sleep(EVAL_PACING_SECONDS)  # stay under the tokens/minute cap
         row = run_item(graph, item)
         rows.append(row)
         if row.get("error"):

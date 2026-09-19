@@ -49,6 +49,11 @@ jobs:
         working-directory: .
         env:
           PYTHONPATH: backend
+      # Takes ~7 minutes, most of it deliberate waiting: the harness paces
+      # itself to stay under Groq's free-tier 8,000 tokens/minute. Firing the
+      # suite flat out rate-limits it, and the damage then reads as a drop in
+      # answer quality rather than as a provider limit. A slow gate people
+      # believe beats a fast one they learn to ignore.
       - name: "Run evals (gates: faithfulness >= 0.75, refusal >= 2/3)"
         run: python evals/run.py
         env:

@@ -93,6 +93,15 @@ class Settings(BaseSettings):
     # demo makes no requests at all, and a busy hour makes 60.
     # 0 disables the check (tests, and single-process local runs).
     index_refresh_seconds: int = 60
+    # Attempts per LLM call before giving up. Low by default because an
+    # interactive request has a person waiting: more attempts only spend their
+    # patience, and the deadline will cut them off anyway.
+    #
+    # A batch caller that genuinely can wait out a provider rate limit raises
+    # this (the eval harness sets LLM_MAX_RETRIES=8). That difference is
+    # configuration, not a second code path — the retry/backoff logic stays in
+    # one place, which is the whole reason groq_client exists.
+    llm_max_retries: int = 3
     # True on laptops: auth/quota/traces use in-memory fixtures instead of DynamoDB
     local_mode: bool = True
 
