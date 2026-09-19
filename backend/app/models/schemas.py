@@ -69,6 +69,10 @@ class DocumentErrorCode(StrEnum):
     NO_EXTRACTABLE_TEXT = "NO_EXTRACTABLE_TEXT"
     TOO_LARGE = "TOO_LARGE"
     TOO_MANY_PAGES = "TOO_MANY_PAGES"
+    # Registered before a presigned URL was issued, but the bytes never
+    # arrived. Reported instead of leaving the document stuck in UPLOADING
+    # forever, where it would also consume the owner's capacity quota.
+    UPLOAD_ABANDONED = "UPLOAD_ABANDONED"
     UNSUPPORTED_CONTENT_TYPE = "UNSUPPORTED_CONTENT_TYPE"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 

@@ -21,7 +21,6 @@ described in infra/aws_setup.md.
 
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 
 import numpy as np
@@ -31,11 +30,8 @@ from app.documents import registry
 from app.models.schemas import Chunk, DocumentErrorCode, DocumentStatus
 from app.rag import bm25_store, embeddings, index_store
 from app.rag.chunking import chunk_file
+from app.rag.index_lock import index_publication_lock
 from app.rag.pdf import PdfExtractionError
-
-# Serializes publication within this process. Cross-process/-instance safety
-# comes from the pointer compare-and-set in index_store.publish().
-_publish_lock = threading.RLock()
 
 _MAX_PUBLISH_ATTEMPTS = 3
 
@@ -82,12 +78,16 @@ def _rebuild_and_publish(root: Path, doc_id: str, new_chunks: list[Chunk]) -> tu
         try:
             # The lock spans read -> rebuild -> publish, not just publish: this
             # whole sequence is the read-modify-write critical section, and
-            # holding the lock only over the final write would let two threads
+            # holding the lock only over the final write would let two writers
             # both rebuild from the same base and race, which is exactly the
             # lost-update bug being fixed. Embedding inside the lock serializes
-            # concurrent uploads within a process — correct for a single-writer
-            # index, and far cheaper than losing a user's document.
-            with _publish_lock:
+            # concurrent uploads — correct for a single-writer index, and far
+            # cheaper than losing a user's document.
+            #
+            # This is now a DISTRIBUTED lock (rag/index_lock.py). The previous
+            # threading.RLock protected one process only, so two Lambda
+            # instances publishing at once could still drop a document.
+            with index_publication_lock():
                 existing_chunks, existing_vecs, base_version = _load_current_chunks(root)
 
                 # Drop any prior generation of THIS document so re-upload

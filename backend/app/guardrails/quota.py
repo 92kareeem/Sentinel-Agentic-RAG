@@ -14,10 +14,13 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.config import get_settings
+from app.documents import registry
+from app.models.schemas import DocumentStatus
 
-# local_mode fallback: in-memory counters, same semantics, laptop only
+# local_mode fallback: in-memory counter, same semantics, laptop only.
+# Upload usage needs no equivalent — it is derived from the registry, which
+# already has a local backend (see upload_usage).
 _local_counts: dict[str, int] = {}
-_local_uploads: dict[str, dict[str, int]] = {}  # user_id -> {count, bytes}
 
 
 def _quota_key(user_id: str) -> str:
@@ -76,56 +79,62 @@ def check_quota(user: dict[str, Any]) -> None:
         raise
 
 
+# Statuses that occupy capacity. FAILED is excluded on purpose: a document
+# that never indexed stores nothing and answers nothing, and counting it would
+# let a user lock themselves out permanently by uploading a few corrupt PDFs.
+_LIVE_STATUSES = frozenset(
+    {
+        DocumentStatus.UPLOADING,
+        DocumentStatus.UPLOADED,
+        DocumentStatus.PROCESSING,
+        DocumentStatus.INDEXED,
+    }
+)
+
+
+def upload_usage(owner_id: str) -> tuple[int, int]:
+    """(documents, bytes) the owner currently holds, derived from the registry.
+
+    DERIVED, NOT COUNTED — and that is the whole point.
+
+    This used to be a stored counter in the quotas table, incremented on every
+    upload and decremented never. It drifted from reality in three ways at
+    once: deleting a document did not give the capacity back, so a user who
+    uploaded and deleted ten files could never upload again; abandoned
+    UPLOADING rows counted forever; and because the counter lived in a
+    different table from the documents, recreating the documents table left a
+    counter measuring documents that no longer existed. That is exactly what
+    happened in production — the counter read 10/10 while the table held zero
+    rows.
+
+    The registry is already the source of truth for what a user owns, and
+    listing it is a single partition query. Deriving the number cannot drift,
+    because there is no second copy to drift from.
+    """
+    records = registry.list_for_owner(owner_id)  # excludes DELETED, expires abandoned
+    live = [r for r in records if r.status in _LIVE_STATUSES]
+    return len(live), sum(r.file_size for r in live)
+
+
 def check_upload_quota(user: dict[str, Any], incoming_bytes: int) -> None:
-    """Reject (429) if this upload would exceed the user's lifetime doc/byte
-    limits. Read-then-check (uploads are rare — no concurrency concern like
-    queries have). Admin bypasses."""
+    """Reject (429) if this upload would exceed the owner's capacity limits.
+
+    Note this is a CAPACITY limit ("how much may you hold at once"), not a
+    lifetime one ("how much may you ever upload"). Deleting a document frees
+    the capacity immediately, which is what a user expects from a limit
+    expressed in documents and bytes. Abuse of the churn that allows is
+    covered by the per-day query quota above.
+    """
     if user.get("is_admin"):
         return
     doc_limit = int(user.get("upload_doc_limit", 50))
     byte_limit = int(user.get("upload_bytes_limit", 200_000_000))
-    uid = str(user["user_id"])
-    settings = get_settings()
 
-    if settings.local_mode:
-        cur = _local_uploads.get(uid, {"count": 0, "bytes": 0})
-    else:
-        import boto3
+    count, used_bytes = upload_usage(str(user["user_id"]))
 
-        table = boto3.resource("dynamodb", region_name=settings.aws_region).Table(
-            settings.ddb_table_quotas
-        )
-        item = table.get_item(Key={"quota_key": f"{uid}#U"}).get("Item", {})
-        cur = {"count": int(item.get("count", 0)), "bytes": int(item.get("bytes", 0))}
-
-    if cur["count"] >= doc_limit:
+    if count >= doc_limit:
         raise HTTPException(status_code=429, detail=f"upload limit reached ({doc_limit} documents)")
-    if cur["bytes"] + incoming_bytes > byte_limit:
+    if used_bytes + incoming_bytes > byte_limit:
         raise HTTPException(
             status_code=429, detail=f"upload storage limit reached ({byte_limit} bytes)"
         )
-
-
-def record_upload(user: dict[str, Any], size_bytes: int) -> None:
-    """Count a successful upload against the user's lifetime totals."""
-    if user.get("is_admin"):
-        return
-    uid = str(user["user_id"])
-    settings = get_settings()
-    if settings.local_mode:
-        cur = _local_uploads.setdefault(uid, {"count": 0, "bytes": 0})
-        cur["count"] += 1
-        cur["bytes"] += size_bytes
-        return
-
-    import boto3
-
-    table = boto3.resource("dynamodb", region_name=settings.aws_region).Table(
-        settings.ddb_table_quotas
-    )
-    table.update_item(
-        Key={"quota_key": f"{uid}#U"},
-        UpdateExpression="ADD #c :one, #b :sz",
-        ExpressionAttributeNames={"#c": "count", "#b": "bytes"},
-        ExpressionAttributeValues={":one": 1, ":sz": size_bytes},
-    )

@@ -44,6 +44,8 @@ export const DOCUMENT_ERROR_HELP: Record<string, string> = {
   NO_EXTRACTABLE_TEXT:
     "Almost no text could be extracted, so this document cannot be answered from reliably.",
   TOO_MANY_PAGES: "This document has more pages than Sentinel will index.",
+  UPLOAD_ABANDONED:
+    "This upload never finished, so the file was never received. Upload it again.",
   TOO_LARGE: "This document is over the 1 MB size limit.",
   UNSUPPORTED_CONTENT_TYPE: "Only .pdf, .md and .txt files are supported.",
   INTERNAL_ERROR: "Indexing failed unexpectedly. Please try again.",

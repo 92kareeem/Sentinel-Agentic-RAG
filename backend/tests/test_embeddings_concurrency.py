@@ -1,0 +1,144 @@
+"""Thread-safety of the lazily-initialized embedding singletons.
+
+Found by a flaky concurrency test that failed ~4 runs in 5:
+
+    NotImplementedError: Cannot copy out of meta tensor; no data!
+
+Four threads ingesting at once each called token_offsets() during chunking —
+which happens outside the index publication lock — and raced while building the
+model. This is reachable in production, not only in tests: FastAPI runs `def`
+endpoints in a threadpool, so two uploads arriving together in a cold process
+hit it on the very first request.
+
+These tests drive the locking directly with fake, deliberately-slow
+constructors rather than real models: the real failure depends on torch
+internals and reproduces only intermittently, whereas "the factory runs exactly
+once" is the invariant that actually matters and can be asserted every time.
+"""
+
+from __future__ import annotations
+
+import sys
+import threading
+import time
+import types
+from typing import Any
+
+import pytest
+from app.rag import embeddings
+
+
+def _run_concurrently(fn: Any, n: int = 8) -> list[Exception]:
+    errors: list[Exception] = []
+    barrier = threading.Barrier(n)
+
+    def worker() -> None:
+        try:
+            barrier.wait()  # maximize overlap on the first-use path
+            fn()
+        except Exception as exc:  # noqa: BLE001 — surfaced via `errors`
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return errors
+
+
+def test_torch_model_is_constructed_exactly_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two concurrent constructions of SentenceTransformer do not merely waste
+    memory — they raise, because both threads materialize the same meta-device
+    parameters at once."""
+    built: list[str] = []
+
+    class FakeModel:
+        def __init__(self, name: str, device: str | None = None) -> None:
+            built.append(name)
+            time.sleep(0.05)  # widen the window a real load would have
+
+    monkeypatch.setitem(
+        sys.modules, "sentence_transformers", types.SimpleNamespace(SentenceTransformer=FakeModel)
+    )
+    monkeypatch.setattr(embeddings, "_model", None)
+
+    errors = _run_concurrently(embeddings.get_model)
+
+    assert not errors, errors
+    assert built == ["sentence-transformers/all-MiniLM-L6-v2"], built
+
+
+def test_offsets_tokenizer_is_constructed_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    built: list[int] = []
+
+    class FakeTokenizer:
+        def __init__(self) -> None:
+            self.truncating = True
+
+        @staticmethod
+        def from_file(path: str) -> FakeTokenizer:
+            built.append(1)
+            time.sleep(0.05)
+            return FakeTokenizer()
+
+        def no_truncation(self) -> None:
+            self.truncating = False
+
+        def encode(self, text: str) -> Any:
+            return types.SimpleNamespace(offsets=[(0, 1)])
+
+    monkeypatch.setenv("EMBED_BACKEND", "onnx")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setitem(sys.modules, "tokenizers", types.SimpleNamespace(Tokenizer=FakeTokenizer))
+    monkeypatch.setattr(embeddings, "_offsets_tok", None)
+
+    errors = _run_concurrently(lambda: embeddings.token_offsets("hello world"))
+    get_settings.cache_clear()
+
+    assert not errors, errors
+    assert len(built) == 1, f"tokenizer built {len(built)} times"
+
+
+def test_offsets_tokenizer_is_never_visible_while_it_still_truncates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ordering bug, separate from the race: the global used to be assigned
+    BEFORE no_truncation() was applied, so another thread could grab a
+    tokenizer that still truncated at ~128 tokens — silently dropping the tail
+    of every section from chunking rather than failing."""
+    observed_truncating: list[bool] = []
+
+    class FakeTokenizer:
+        def __init__(self) -> None:
+            self.truncating = True
+
+        @staticmethod
+        def from_file(path: str) -> FakeTokenizer:
+            return FakeTokenizer()
+
+        def no_truncation(self) -> None:
+            time.sleep(0.05)  # a window for another thread to observe the global
+            self.truncating = False
+
+        def encode(self, text: str) -> Any:
+            observed_truncating.append(self.truncating)
+            return types.SimpleNamespace(offsets=[(0, 1)])
+
+    monkeypatch.setenv("EMBED_BACKEND", "onnx")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setitem(sys.modules, "tokenizers", types.SimpleNamespace(Tokenizer=FakeTokenizer))
+    monkeypatch.setattr(embeddings, "_offsets_tok", None)
+
+    errors = _run_concurrently(lambda: embeddings.token_offsets("hello world"))
+    get_settings.cache_clear()
+
+    assert not errors, errors
+    assert observed_truncating, "no thread reached encode()"
+    assert not any(observed_truncating), "a thread used a still-truncating tokenizer"

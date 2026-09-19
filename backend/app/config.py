@@ -66,6 +66,21 @@ class Settings(BaseSettings):
     ddb_table_traces: str = "sentinel-traces"
     ddb_table_documents: str = "sentinel-documents"
     use_s3_index: bool = False
+
+    # --- index publication lock (rag/index_lock.py) ---
+    # Sized to the Lambda timeout, not to typical work: a lease shorter than
+    # the critical section lets a slow-but-healthy writer have its lock stolen
+    # mid-publish, which is the concurrent-writer bug the lock exists to stop.
+    index_lock_lease_seconds: int = 120
+    # How long a writer waits for the lock before giving up. Kept under the
+    # function timeout so the caller fails with a clear error rather than being
+    # killed mid-wait.
+    index_lock_wait_seconds: int = 60
+
+    # An upload registered this long ago that never delivered its bytes is
+    # treated as abandoned. Comfortably beyond the 900s presigned-URL expiry,
+    # so a slow-but-real upload is never mistaken for a dead one.
+    upload_abandon_seconds: int = 1800
     # True on laptops: auth/quota/traces use in-memory fixtures instead of DynamoDB
     local_mode: bool = True
 
