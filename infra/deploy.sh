@@ -92,7 +92,13 @@ fi
 
 # ---------------------------------------------------------------- 4. lambda
 log "Lambda function"
-ENV_VARS="Variables={GROQ_API_KEY=${GROQ_API_KEY:?set GROQ_API_KEY},S3_BUCKET_DOCS=${DOCS_BUCKET},AWS_REGION_OVERRIDE=${REGION}}"
+# The Groq key is NOT passed here: plaintext Lambda env vars are readable by
+# anyone with lambda:GetFunctionConfiguration and show up in console
+# screenshots. The function reads the SSM SecureString named below at cold
+# start (config.get_settings). Create it once, out of band:
+#   aws ssm put-parameter --name /sentinel/groq-api-key --type SecureString --value <key>
+# (AWS_REGION is not set either: Lambda provides it to every function.)
+ENV_VARS="Variables={GROQ_API_KEY_SSM_PARAM=/sentinel/groq-api-key,S3_BUCKET_DOCS=${DOCS_BUCKET}}"
 
 if aws lambda get-function --function-name "$FUNCTION" --region "$REGION" >/dev/null 2>&1; then
   aws lambda update-function-code --function-name "$FUNCTION" --region "$REGION" \
