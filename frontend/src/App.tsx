@@ -3,6 +3,7 @@ import { ApiError, deleteDocument, getTrace, listDocuments, postQuery } from "./
 import { ChatThread } from "./components/ChatThread";
 import { Composer } from "./components/Composer";
 import { Header } from "./components/Header";
+import { InsightsModal } from "./components/InsightsModal";
 import { Sidebar } from "./components/Sidebar";
 import { SourceDrawer } from "./components/SourceDrawer";
 import { UploadModal } from "./components/UploadModal";
@@ -47,6 +48,7 @@ export default function App() {
   const [citation, setCitation] = useState<Citation | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [insightsOpen, setInsightsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const historyRef = useRef<ConversationTurn[]>([]);
 
@@ -153,6 +155,7 @@ export default function App() {
       <Header
         onMenuClick={() => setSidebarOpen(true)}
         onNewChat={newChat}
+        onInsightsClick={() => setInsightsOpen(true)}
         hasMessages={messages.length > 0}
       />
 
@@ -191,6 +194,8 @@ export default function App() {
           }}
         />
       )}
+
+      {insightsOpen && <InsightsModal onClose={() => setInsightsOpen(false)} />}
 
       <SourceDrawer citation={citation} onClose={() => setCitation(null)} />
     </div>

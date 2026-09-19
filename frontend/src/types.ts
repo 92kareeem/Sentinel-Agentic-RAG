@@ -167,3 +167,45 @@ export type ChatMessage =
     }
   | { id: string; role: "assistant"; kind: "pending" }
   | { id: string; role: "assistant"; kind: "error"; message: string };
+
+// ------------------------------------------------------- coverage insights
+//
+// Mirrors CaseDiagnosis / KnowledgeGap / KnowledgeGapReport in schemas.py.
+
+export type CaseDiagnosis =
+  | "NO_EVIDENCE_FOUND"
+  | "EVIDENCE_OFF_TOPIC"
+  | "ANSWER_UNVERIFIABLE"
+  | "CITATION_MISATTRIBUTED"
+  | "CAPACITY_EXCEEDED";
+
+// Plain-language labels. The report is read by whoever owns the documents,
+// who has no reason to know what "EVIDENCE_OFF_TOPIC" means — and a report
+// that needs a glossary is one nobody acts on.
+export const DIAGNOSIS_LABEL: Record<CaseDiagnosis, string> = {
+  NO_EVIDENCE_FOUND: "Nothing covers this",
+  EVIDENCE_OFF_TOPIC: "Covered, but not this case",
+  ANSWER_UNVERIFIABLE: "Evidence unclear",
+  CITATION_MISATTRIBUTED: "Overlapping sources",
+  CAPACITY_EXCEEDED: "System limit",
+};
+
+export interface KnowledgeGap {
+  topic: string;
+  question_count: number;
+  example_questions: string[];
+  diagnosis: CaseDiagnosis;
+  recommended_action: string;
+  first_seen: string;
+  last_seen: string;
+}
+
+export interface KnowledgeGapReport {
+  generated_at: string;
+  window_days: number;
+  total_questions: number;
+  answered: number;
+  unanswered: number;
+  answer_rate: number;
+  gaps: KnowledgeGap[];
+}
