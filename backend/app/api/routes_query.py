@@ -15,8 +15,11 @@ from app.agents.state import AgentState
 from app.config import get_settings
 from app.guardrails import cost_governor, injection, input_validation, pii, quota
 from app.guardrails.auth import resolve_user
+from app.learning import casebook
 from app.llm.groq_client import CircuitOpenError
 from app.models.schemas import (
+    Case,
+    CaseOutcome,
     Citation,
     CriticScores,
     QueryRequest,
@@ -41,6 +44,79 @@ def _get_graph() -> Any:
     if _graph is None:
         _graph = build_graph()
     return _graph
+
+
+def _repaired_citation_count(trace: TraceRecorder) -> int:
+    """How many citations the grounding gate had to re-point, from the trace.
+
+    Read back off the trace rather than threaded through AgentState: the graph
+    already records it, and adding a field to the state schema for something
+    only the API reports would make every node's contract wider for no reason.
+    """
+    total = 0
+    for step in trace.steps:
+        if step["name"] == "grounding_check":
+            try:
+                total += int(step["meta"].get("repaired_citations", 0))
+            except (TypeError, ValueError):
+                continue
+    return total
+
+
+def _persist_observations(
+    trace: TraceRecorder,
+    result: Any,
+    refused: bool,
+    user_id: str,
+    question: str,
+    doc_id: str | None,
+) -> None:
+    """Write the trace, the volume counter and (if warranted) a case.
+
+    All of it is best-effort, and deliberately AFTER the answer is fully
+    determined. A user who asked a hard question must not lose their response
+    because the record of it could not be stored — and the casebook exists
+    precisely to make hard questions better, so failing them would invert the
+    feature's purpose. put_trace previously ran unguarded here, so a DynamoDB
+    blip turned a finished answer into a 500.
+    """
+    outcome = CaseOutcome.REFUSED if refused else CaseOutcome.ANSWERED
+    try:
+        put_trace(trace.to_dict("refused" if refused else "answered"))
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning(
+            "trace_write_failed",
+            extra={"trace_id": trace.trace_id, "data": f"{type(exc).__name__}: {exc}"},
+        )
+
+    casebook.bump_totals(user_id, outcome)
+
+    reason = result.get("refusal_reason")
+    repaired = _repaired_citation_count(trace)
+    diagnosis = casebook.diagnose(
+        outcome=outcome,
+        refusal_reason=str(reason) if reason else None,
+        retrieved_chunks=len(result["retrieved"]),
+        repaired_citations=repaired,
+    )
+    if diagnosis is None:  # a clean answer — nothing to learn from
+        return
+    casebook.record(
+        Case(
+            case_id=casebook.new_case_id(),
+            owner_id=user_id,
+            trace_id=trace.trace_id,
+            question=question,
+            outcome=outcome,
+            diagnosis=diagnosis,
+            refusal_reason=reason,
+            doc_id=doc_id,
+            retrieved_chunks=len(result["retrieved"]),
+            repaired_citations=repaired,
+            repair_count=trace.repair_count,
+            created_at=casebook.utc_now(),
+        )
+    )
 
 
 @router.post("/query", response_model=None)
@@ -125,7 +201,17 @@ def query(
 
     latency_ms = int((time.perf_counter() - t0) * 1000)
     refused = result["status"] == "refused" or is_insufficient_context(result["answer"])
-    put_trace(trace.to_dict("refused" if refused else "answered"))
+    try:
+        _persist_observations(trace, result, refused, str(user["user_id"]), scrubbed, req.doc_id)
+    except Exception as exc:  # noqa: BLE001
+        # The guarantee lives HERE, not in each writer, so it holds however
+        # many things this grows to record. An answer has already been
+        # computed and paid for; nothing about filing it away is worth
+        # turning that into a 500 for the user.
+        _logger.warning(
+            "observations_write_failed",
+            extra={"trace_id": trace.trace_id, "data": f"{type(exc).__name__}: {exc}"},
+        )
 
     if refused:
         # Falls back to INSUFFICIENT_EVIDENCE for the one path that reaches

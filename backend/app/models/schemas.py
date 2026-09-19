@@ -354,3 +354,104 @@ class Problem(BaseModel):
     status: int
     detail: str
     trace_id: str | None = None
+
+
+# ------------------------------------------------------------ the casebook
+#
+# Every question the system could not answer well is worth more than the
+# apology it produced. A refusal is a fact about the CORPUS ("nothing here
+# covers parental leave for contractors"), and nobody currently owns that
+# fact: the user rephrases or gives up, and the document owner — the one
+# person who could fix it — never finds out. The casebook is where those
+# facts accumulate so they can be acted on and, later, regression-tested.
+
+
+class CaseDiagnosis(StrEnum):
+    """Why an answer was not delivered well, as a cause rather than a symptom.
+
+    The distinction that matters here is between problems the DOCUMENT OWNER
+    can fix and problems the SYSTEM has to fix. Lumping them together is what
+    makes most quality dashboards useless: "8% failure rate" tells a business
+    nothing about whether to write a policy or file a bug.
+
+    Derived deterministically from the graph's own state — no extra LLM call.
+    That keeps capture free and, just as importantly, keeps it off the
+    provider's rate limit, so a burst of hard questions cannot make diagnosis
+    the thing that fails.
+    """
+
+    # Owner-actionable: the corpus does not cover this.
+    NO_EVIDENCE_FOUND = "NO_EVIDENCE_FOUND"  # retrieval returned nothing in scope
+    EVIDENCE_OFF_TOPIC = "EVIDENCE_OFF_TOPIC"  # found passages, none addressed it
+    # System-actionable: the evidence was there and we still failed.
+    ANSWER_UNVERIFIABLE = "ANSWER_UNVERIFIABLE"  # drafted, failed critic/grounding
+    CITATION_MISATTRIBUTED = "CITATION_MISATTRIBUTED"  # answered, but attribution needed repair
+    # Neither: an operational limit fired before the question got a fair run.
+    CAPACITY_EXCEEDED = "CAPACITY_EXCEEDED"
+
+
+class CaseOutcome(StrEnum):
+    """What the user actually received. Kept separate from the diagnosis: an
+    answer that shipped with repaired citations is a SUCCESS with a quality
+    signal attached, and counting it as a failure would understate the
+    system while hiding a real attribution problem."""
+
+    ANSWERED = "ANSWERED"
+    REFUSED = "REFUSED"
+
+
+class Case(BaseModel):
+    """One question that did not go well, with enough context to act on it.
+
+    Deliberately stores the question and not the answer: the question is the
+    durable artifact (it becomes a regression test and a gap report line),
+    while a rejected draft is a transient symptom of one model run.
+    """
+
+    case_id: str
+    owner_id: str
+    trace_id: str
+    question: str  # PII-scrubbed, as everything downstream of the API is
+    outcome: CaseOutcome
+    diagnosis: CaseDiagnosis
+    refusal_reason: RefusalReason | None = None
+    doc_id: str | None = None  # set when the user scoped to one document
+    retrieved_chunks: int = 0
+    repaired_citations: int = 0
+    repair_count: int = 0
+    created_at: str
+
+
+class KnowledgeGap(BaseModel):
+    """A cluster of related questions the corpus could not answer.
+
+    Clustered rather than listed one by one because the unit of work for a
+    document owner is a topic, not a question: six people asking the same
+    thing six ways is one missing paragraph, and a flat list of 200 refusals
+    is a report nobody reads twice.
+    """
+
+    topic: str  # the most representative question in the cluster
+    question_count: int
+    example_questions: list[str]
+    diagnosis: CaseDiagnosis
+    recommended_action: str
+    first_seen: str
+    last_seen: str
+
+
+class KnowledgeGapReport(BaseModel):
+    """The document owner's work list, newest evidence first.
+
+    The headline numbers are deliberately business-facing. "Answer rate" is
+    the one a manager can act on; retrieval hit-rate and critic scores are
+    engineering diagnostics and stay out of this response.
+    """
+
+    generated_at: str
+    window_days: int
+    total_questions: int
+    answered: int
+    unanswered: int
+    answer_rate: float
+    gaps: list[KnowledgeGap]

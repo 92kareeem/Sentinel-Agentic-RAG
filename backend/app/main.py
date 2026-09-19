@@ -11,7 +11,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from mangum import Mangum
 
-from app.api import routes_health, routes_ingest, routes_query, routes_traces
+from app.api import (
+    routes_health,
+    routes_ingest,
+    routes_insights,
+    routes_query,
+    routes_traces,
+)
 from app.config import get_settings
 from app.models.schemas import Problem
 
@@ -32,6 +38,7 @@ def create_app() -> FastAPI:
     app.include_router(routes_query.router, prefix="/v1")
     app.include_router(routes_ingest.router, prefix="/v1")
     app.include_router(routes_traces.router, prefix="/v1")
+    app.include_router(routes_insights.router, prefix="/v1")
 
     @app.exception_handler(HTTPException)
     async def http_problem(request: Request, exc: HTTPException) -> JSONResponse:
