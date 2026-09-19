@@ -47,7 +47,9 @@ def make_groq(critic_scores: list[str]):
 def _state() -> AgentState:
     settings = get_settings()
     return {
-        "query": "How long do refunds take?", "user_id": "t", "doc_id": None,
+        "query": "How long do refunds take?",
+        "search_query": "How long do refunds take?",
+        "user_id": "t", "doc_id": None,
         "trace": TraceRecorder(), "attempt": 0,
         "model": settings.groq_model_simple,
         "token_budget_left": settings.token_budget,
@@ -85,7 +87,11 @@ def test_first_failure_triggers_rewrite_then_answers() -> None:
     assert trace.repair_count == 1
     names = [s["name"] for s in trace.steps]
     assert "repair_rewrite" in names
-    assert result["query"] == "rewritten query"
+    # The rewrite lands on search_query and leaves the user's question alone.
+    # This assertion used to read `result["query"] == "rewritten query"` —
+    # it pinned the intent-drift bug in place as if it were the contract.
+    assert result["search_query"] == "rewritten query"
+    assert result["query"] == "How long do refunds take?"
 
 
 def test_two_failures_escalate_then_answer() -> None:

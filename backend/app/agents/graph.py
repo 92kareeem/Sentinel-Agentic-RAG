@@ -16,7 +16,7 @@ from app.agents import repair, retriever, router, synthesizer
 from app.agents.budget import check_budget
 from app.agents.state import AgentState
 from app.config import get_settings
-from app.models.schemas import RefusalReason, is_insufficient_context
+from app.models.schemas import RefusalReason, is_insufficient_context, safe_refusal_text
 
 
 def grounding_check_node(state: AgentState) -> AgentState:
@@ -60,18 +60,33 @@ def refusal_node(state: AgentState) -> AgentState:
         # A hard cap fired before the graph could finish — the corpus may well
         # contain the answer, so this must not be reported as "not in your
         # documents". It is retryable; INSUFFICIENT_EVIDENCE is not.
-        state["refusal_reason"] = RefusalReason.BUDGET_EXHAUSTED
+        reason = RefusalReason.BUDGET_EXHAUSTED
     elif is_insufficient_context(state.get("answer", "")):
         # The model read the evidence and said it doesn't answer the question.
-        state["refusal_reason"] = RefusalReason.INSUFFICIENT_EVIDENCE
+        reason = RefusalReason.INSUFFICIENT_EVIDENCE
     else:
         # An answer was drafted but could not be verified — it failed the
         # critic or the grounding gate. Distinct from "no evidence": there WAS
         # evidence, we just couldn't stand behind what was written from it.
-        state["refusal_reason"] = RefusalReason.UNVERIFIABLE_ANSWER
+        reason = RefusalReason.UNVERIFIABLE_ANSWER
 
-    if not state.get("answer"):
-        state["answer"] = "I don't have enough verified context to answer this confidently."
+    state["refusal_reason"] = reason
+
+    draft = state.get("answer", "")
+    if draft and not is_insufficient_context(draft):
+        # Kept in state (never in a response) so triage can ask *what* the
+        # model wanted to say — the single most useful signal for telling a
+        # retrieval miss apart from a synthesis failure.
+        state["rejected_draft"] = draft
+        state["trace"].record_step(
+            "refusal", 0, reason=reason.value, rejected_draft_chars=len(draft)
+        )
+
+    state["answer"] = safe_refusal_text(reason)
+    # Citations described claims in a draft that is no longer being made.
+    # Leaving them attached would let a client render sources beneath a
+    # refusal, implying the refusal itself was evidence-backed.
+    state["citations"] = []
     return state
 
 

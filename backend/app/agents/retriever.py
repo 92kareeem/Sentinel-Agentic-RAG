@@ -157,9 +157,14 @@ def retriever_node(state: AgentState) -> AgentState:
         )
         return state
 
-    qvec = embeddings.embed_texts([state["query"]])[0]
+    # search_query, not query: after repair_rewrite these differ, and it is
+    # the reformulation that is keyword-dense enough to retrieve well. The
+    # user's original wording stays in `query`, which is what the synthesizer
+    # and the critic answer and score against.
+    search_query = state["search_query"]
+    qvec = embeddings.embed_texts([search_query])[0]
     dense = [row for row, _ in index_store.search(_index, qvec, cand)]
-    sparse = [row for row, _ in bm25_store.search(_bm25, state["query"], cand)]
+    sparse = [row for row, _ in bm25_store.search(_bm25, search_query, cand)]
     if allowed is not None:
         dense = [r for r in dense if r in allowed]
         sparse = [r for r in sparse if r in allowed]
@@ -167,10 +172,10 @@ def retriever_node(state: AgentState) -> AgentState:
     fused = bm25_store.rrf_fuse([dense, sparse], k=settings.rrf_k, top_k=settings.top_k)
     ranked_rows = [row for row, _ in fused]
     reranked = _rerank_candidates(
-        state["query"],
+        search_query,
         [_chunks[row] for row in ranked_rows],
         ranked_rows,
-        query_terms=_normalize_query_terms(state["query"]),
+        query_terms=_normalize_query_terms(search_query),
     )
 
     state["retrieved"] = reranked[: settings.top_k]

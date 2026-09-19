@@ -61,6 +61,11 @@ jobs:
       - run: npm ci
       - name: Typecheck
         run: npx tsc --noEmit
+      # The answer renderer parses untrusted model output about user-supplied
+      # documents. A guard that fails to advance there is an infinite loop in
+      # the browser, which typechecking and a successful build both pass.
+      - name: Unit tests
+        run: npm test
       - name: Build
         run: npm run build
         env:

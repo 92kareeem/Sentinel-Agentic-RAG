@@ -88,7 +88,8 @@ def run_item(graph, item: dict) -> dict:
     settings = get_settings()
     trace = TraceRecorder(query_redacted=item["question"])
     state: AgentState = {
-        "query": item["question"], "user_id": "eval", "doc_id": None, "trace": trace, "attempt": 0,
+        "query": item["question"], "search_query": item["question"],
+        "user_id": "eval", "doc_id": None, "trace": trace, "attempt": 0,
         "model": settings.groq_model_simple,
         "token_budget_left": settings.token_budget,
         "deadline_ts": time.monotonic() + settings.deadline_seconds,

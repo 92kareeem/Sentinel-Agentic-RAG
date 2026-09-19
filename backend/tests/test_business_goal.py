@@ -76,6 +76,7 @@ def _retrieve(query: str, *, owner: str, doc_id: str | None) -> list:
 
     state: AgentState = {
         "query": query,
+        "search_query": query,
         "user_id": owner,
         "doc_id": doc_id,
         "trace": TraceRecorder(),

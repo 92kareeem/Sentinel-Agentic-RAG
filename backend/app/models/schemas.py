@@ -234,6 +234,34 @@ class RefusalReason(StrEnum):
     BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"  # hit token/deadline/attempt cap first
 
 
+# The user-facing text for each refusal reason, owned by the contract rather
+# than by whatever the model last produced.
+#
+# RefusalResponse.reason used to carry state["answer"] straight through, which
+# on a critic/grounding failure is the REJECTED DRAFT — the one text the system
+# had just decided it could not stand behind, delivered to the caller as the
+# explanation for withholding it. Generating this text from the reason code
+# makes that leak structurally impossible: no model output reaches the field.
+_REFUSAL_TEXT: dict[RefusalReason, str] = {
+    RefusalReason.INSUFFICIENT_EVIDENCE: (
+        "I couldn't find anything in your documents that answers this question."
+    ),
+    RefusalReason.UNVERIFIABLE_ANSWER: (
+        "I found related material, but couldn't confirm an answer was fully "
+        "supported by it, so I'm not going to guess."
+    ),
+    RefusalReason.BUDGET_EXHAUSTED: (
+        "This question hit the processing limit before a verified answer was "
+        "ready. Please try again."
+    ),
+}
+
+
+def safe_refusal_text(reason: RefusalReason) -> str:
+    """Refusal prose that is safe to show, for any reason code."""
+    return _REFUSAL_TEXT[reason]
+
+
 class RefusalResponse(BaseModel):
     trace_id: str
     refusal: bool = True

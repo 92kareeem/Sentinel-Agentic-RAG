@@ -25,6 +25,7 @@ from app.models.schemas import (
     RefusalResponse,
     TokenUsage,
     is_insufficient_context,
+    safe_refusal_text,
 )
 from app.observability.logging import get_logger
 from app.observability.tracing import TraceRecorder, put_trace
@@ -79,6 +80,9 @@ def query(
     ]
     state: AgentState = {
         "query": scrubbed,
+        # Retrieval starts from the user's own wording; repair_rewrite may
+        # replace this, but never `query`.
+        "search_query": scrubbed,
         "user_id": str(user["user_id"]),
         "doc_id": req.doc_id,
         "trace": trace,
@@ -124,13 +128,20 @@ def query(
     put_trace(trace.to_dict("refused" if refused else "answered"))
 
     if refused:
+        # Falls back to INSUFFICIENT_EVIDENCE for the one path that reaches
+        # here without passing through refusal_node: the synthesizer returning
+        # the sentinel with status still "running".
+        reason_code = result.get("refusal_reason") or RefusalReason.INSUFFICIENT_EVIDENCE
         return RefusalResponse(
             trace_id=trace.trace_id,
-            reason=result["answer"],
-            # Falls back to INSUFFICIENT_EVIDENCE for the one path that reaches
-            # here without passing through refusal_node: the synthesizer
-            # returning the sentinel with status still "running".
-            reason_code=result.get("refusal_reason") or RefusalReason.INSUFFICIENT_EVIDENCE,
+            # Derived from the code, NOT read from result["answer"]. On a
+            # critic or grounding failure that field held the rejected draft,
+            # so the API handed back the very text the graph had just refused
+            # to stand behind. refusal_node now overwrites it too; generating
+            # the prose here as well means no future node can reintroduce the
+            # leak by leaving model output in `answer`.
+            reason=safe_refusal_text(reason_code),
+            reason_code=reason_code,
             best_effort_context=[c.chunk_id for c in result["retrieved"]],
         )
     return QueryResponse(
