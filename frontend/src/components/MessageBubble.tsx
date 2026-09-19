@@ -1,5 +1,6 @@
 import { renderAnswerMarkdown } from "../lib/markdown";
 import type { ChatMessage, Citation, TraceRecord } from "../types";
+import { REFUSAL_COPY } from "../types";
 import { ResponseDetails } from "./ResponseDetails";
 
 interface Props {
@@ -53,18 +54,18 @@ export function MessageBubble({ message, onCiteClick, trace }: Props) {
   }
 
   if (message.kind === "refusal") {
+    // Driven by the backend's structured reason_code rather than by matching
+    // on prose. The three cases need different user actions: rephrase/upload,
+    // ask more specifically, or simply retry.
+    const copy = REFUSAL_COPY[message.reasonCode] ?? REFUSAL_COPY.INSUFFICIENT_EVIDENCE;
     return (
       <div className="msg msg-assistant">
         <div className="bubble bubble-assistant refusal-card">
           <div className="refusal-title">
-            <span aria-hidden>✦</span> Sentinel couldn't verify this answer
+            <span aria-hidden>✦</span> {copy.title}
           </div>
-          <p>
-            {message.reason === "INSUFFICIENT_CONTEXT"
-              ? "I couldn't find enough information in your documents to answer this confidently."
-              : message.reason}
-          </p>
-          <p className="refusal-hint">Try asking about something covered in your uploaded documents.</p>
+          <p>{copy.body}</p>
+          <p className="refusal-hint">{copy.hint}</p>
         </div>
       </div>
     );

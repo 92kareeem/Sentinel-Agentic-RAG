@@ -10,6 +10,8 @@ only the LLM is stubbed.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from app.config import get_settings
 from app.documents import registry
@@ -142,6 +144,48 @@ def test_upload_rejects_oversize_file(client) -> None:
     assert resp.status_code == 413
 
 
+def test_upload_size_limit_is_exact_at_the_boundary(client) -> None:
+    """The limit is 1 MB = 1,048,576 bytes exactly, and "at the limit" must be
+    accepted while "one byte over" is rejected.
+
+    Tested as a boundary rather than with one obviously-oversize file because
+    off-by-one errors here are silent: a `>=` where `>` belongs rejects a
+    legitimate document with no way for the user to tell why, and the reverse
+    lets the cap be exceeded.
+    """
+    limit = get_settings().max_upload_bytes
+    assert limit == 1024 * 1024 == 1_048_576
+
+    def upload(nbytes: int):
+        # .txt keeps this a pure size test — no PDF magic-byte validation in
+        # the way of the boundary being measured.
+        body = b"x" * nbytes
+        return client.post(
+            "/v1/documents/local-upload",
+            files={"file": ("size.txt", body, "text/plain")},
+            headers=DEMO,
+        )
+
+    assert upload(0).status_code == 400  # empty is its own rejection
+    assert upload(1).status_code != 413
+    assert upload(limit - 1).status_code != 413
+    assert upload(limit).status_code != 413  # AT the limit is allowed
+    assert upload(limit + 1).status_code == 413  # one byte over is not
+
+
+def test_presigned_upload_policy_carries_the_same_limit(client) -> None:
+    """Defense in depth: the S3 policy must enforce the cap independently.
+
+    In the AWS flow the browser POSTs straight to S3 without touching the API,
+    so a limit checked only in `local-upload` would not apply to the path that
+    production actually uses.
+    """
+    from app.api import routes_ingest
+
+    src = Path(routes_ingest.__file__).read_text(encoding="utf-8")
+    assert '["content-length-range", 1, settings.max_upload_bytes]' in src
+
+
 def test_upload_rejects_unsupported_extension(client) -> None:
     resp = client.post(
         "/v1/documents/local-upload",
@@ -172,6 +216,53 @@ def test_scanned_pdf_upload_reports_actionable_error(client, tmp_path) -> None:
     assert resp.status_code == 422
     assert resp.json()["error_code"] == "UNSUPPORTED_SCANNED_DOCUMENT"
     assert "scanned" in resp.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------- refusals
+
+
+def test_refusal_response_carries_a_machine_readable_reason_code(client, monkeypatch) -> None:
+    """The UI must be able to tell "your documents don't cover this" from
+    "this ran out of budget" without pattern-matching prose: the first asks the
+    user to rephrase or upload, the second just asks them to retry."""
+    from app.api import routes_query
+    from app.models.schemas import RefusalReason
+
+    def fake_graph() -> object:
+        class _G:
+            def invoke(self, state: dict) -> dict:
+                state["status"] = "refused"
+                state["answer"] = "INSUFFICIENT_CONTEXT"
+                state["refusal_reason"] = RefusalReason.INSUFFICIENT_EVIDENCE
+                return state
+
+        return _G()
+
+    monkeypatch.setattr(routes_query, "_get_graph", fake_graph)
+    body = client.post("/v1/query", json={"query": "anything"}, headers=DEMO).json()
+
+    assert body["refusal"] is True
+    assert body["reason_code"] == "INSUFFICIENT_EVIDENCE"
+    assert body["reason"]  # legacy field still populated for existing clients
+
+
+def test_budget_refusal_is_distinguishable_from_missing_evidence(client, monkeypatch) -> None:
+    from app.api import routes_query
+    from app.models.schemas import RefusalReason
+
+    def fake_graph() -> object:
+        class _G:
+            def invoke(self, state: dict) -> dict:
+                state["status"] = "refused"
+                state["answer"] = "I don't have enough verified context."
+                state["refusal_reason"] = RefusalReason.BUDGET_EXHAUSTED
+                return state
+
+        return _G()
+
+    monkeypatch.setattr(routes_query, "_get_graph", fake_graph)
+    body = client.post("/v1/query", json={"query": "anything"}, headers=DEMO).json()
+    assert body["reason_code"] == "BUDGET_EXHAUSTED"
 
 
 # ---------------------------------------------------------------- traces
