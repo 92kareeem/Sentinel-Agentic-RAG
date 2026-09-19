@@ -78,3 +78,47 @@ jobs:
       - name: Build image
         run: |
           docker build -f docker/Dockerfile.lambda -t sentinel-api:ci .
+
+      # Building proves the image assembles; it does NOT prove the app starts.
+      # A missing python-multipart shipped to production and 502'd every route
+      # including /healthz, because FastAPI validates UploadFile parameters
+      # when the route is REGISTERED — an import-time failure that a build can
+      # never catch. This starts the container with the Lambda Runtime
+      # Interface Emulator (present in the AWS base image) and invokes it the
+      # way Lambda does.
+      - name: Container actually starts and serves a request
+        run: |
+          docker run -d --name sentinel-ci -p 9000:8080 \
+            -e LOCAL_MODE=true -e USE_S3_INDEX=false -e INDEX_DIR=/tmp/index \
+            sentinel-api:ci
+
+          # A Function URL event (payload format 2.0). sourceIp/userAgent are
+          # not optional: Mangum reads requestContext.http.sourceIp directly
+          # and raises KeyError without it, which looks like an app bug.
+          EVENT='{"version":"2.0","rawPath":"/healthz","rawQueryString":"",
+                  "headers":{"accept":"*/*"},
+                  "requestContext":{"http":{"method":"GET","path":"/healthz",
+                    "protocol":"HTTP/1.1","sourceIp":"127.0.0.1","userAgent":"ci"}},
+                  "isBase64Encoded":false}'
+
+          for i in $(seq 1 30); do
+            if curl -fsS -XPOST \
+              "http://localhost:9000/2015-03-31/functions/function/invocations" \
+              -d "$EVENT" >/tmp/out.json 2>/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+
+          echo "--- response ---"; cat /tmp/out.json; echo
+          echo "--- container logs ---"; docker logs sentinel-ci
+
+          # An import-time crash still returns HTTP 200 from the emulator, with
+          # the traceback in the body — so assert on the payload, not the exit
+          # code of curl.
+          grep -q '"statusCode": *200' /tmp/out.json
+          grep -q '"status":"ok"' /tmp/out.json
+
+      - name: Clean up
+        if: always()
+        run: docker rm -f sentinel-ci || true
