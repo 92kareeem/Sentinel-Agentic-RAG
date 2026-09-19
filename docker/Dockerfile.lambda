@@ -12,7 +12,12 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 # the image previously could not be built from a clean checkout at all. Pinned
 # by revision so the image stays reproducible and cannot silently change model.
 ARG ONNX_REPO=Xenova/all-MiniLM-L6-v2
-ARG ONNX_REVISION=main
+# A COMMIT SHA, not a branch. "main" moves, and a moved model means the image
+# silently starts producing different embeddings than the ones in the published
+# index — queries would be compared against vectors from another model, which
+# degrades retrieval quietly rather than failing. The comment above used to
+# claim this was pinned while the value was `main`; it is pinned now.
+ARG ONNX_REVISION=751bff37182d3f1213fa05d7196b954e230abad9
 RUN pip install --no-cache-dir "huggingface-hub~=0.26" \
  && python -c "\
 from huggingface_hub import hf_hub_download; import shutil, os;\

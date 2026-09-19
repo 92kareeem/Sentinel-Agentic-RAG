@@ -96,7 +96,20 @@ def run_item(graph, item: dict) -> dict:
         "status": "running", "refusal_reason": None, "conversation_history": [],
     }
     t0 = time.perf_counter()
-    result = graph.invoke(state)
+    try:
+        result = graph.invoke(state)
+    except Exception as exc:  # noqa: BLE001 — reported as "unmeasured", see main()
+        # An upstream failure (Groq rate limit, circuit breaker, network) is NOT
+        # a quality regression, and scoring it as one is worse than not scoring
+        # it at all: a gate that goes red for reasons unrelated to the change
+        # trains everyone to ignore it. Recorded distinctly so main() can say
+        # "could not measure" instead of "faithfulness dropped".
+        return {
+            "id": item["id"], "category": item["category"], "error": f"{type(exc).__name__}: {exc}",
+            "refused": False, "hit": None, "faithfulness": 0.0, "completeness": 0.0,
+            "latency_ms": int((time.perf_counter() - t0) * 1000),
+            "tokens": trace.total_tokens(), "repairs": trace.repair_count, "answer": "",
+        }
     latency_ms = int((time.perf_counter() - t0) * 1000)
 
     # Same helper the API uses, so the harness and production agree on what
@@ -139,9 +152,28 @@ def main() -> None:
     for item in items:
         row = run_item(graph, item)
         rows.append(row)
-        print(f"  [{row['id']:>2}] {row['category']:<12} faith={row['faithfulness']:.2f} "
-              f"compl={row['completeness']:.2f} hit={row['hit']} "
-              f"refused={row['refused']} {row['latency_ms']}ms")
+        if row.get("error"):
+            print(f"  [{row['id']:>2}] {row['category']:<12} UNMEASURED — {row['error'][:80]}")
+        else:
+            print(f"  [{row['id']:>2}] {row['category']:<12} faith={row['faithfulness']:.2f} "
+                  f"compl={row['completeness']:.2f} hit={row['hit']} "
+                  f"refused={row['refused']} {row['latency_ms']}ms")
+
+    # Items that never produced an answer are excluded from every quality
+    # metric. Averaging a 0.0 from a rate-limited request into faithfulness
+    # would report a quality regression that did not happen.
+    unmeasured = [r for r in rows if r.get("error")]
+    if unmeasured:
+        print(f"\n!! {len(unmeasured)}/{len(rows)} questions could not be measured:")
+        for r in unmeasured:
+            print(f"   [{r['id']}] {r['error'][:120]}")
+        print(
+            "\nEVAL INCONCLUSIVE — these are upstream failures (rate limit, "
+            "circuit breaker, network), not quality regressions. Re-run when "
+            "the upstream is healthy.",
+            file=sys.stderr,
+        )
+        sys.exit(2)  # distinct from 1 (a real gate failure)
 
     answerable = [r for r in rows if r["category"] != "unanswerable"]
     unanswerable = [r for r in rows if r["category"] == "unanswerable"]

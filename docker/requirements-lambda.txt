@@ -3,6 +3,12 @@
 # the /documents/{id}/index endpoint can parse uploaded PDFs in-Lambda; it is
 # a small pure-wheel (~20 MB) that keeps the image inside ECR's 500 MB tier.
 fastapi~=0.115
+# Required by the UploadFile parameter on /v1/documents/local-upload. FastAPI
+# checks for it when the ROUTE IS REGISTERED, i.e. at import time — so its
+# absence does not fail that one endpoint, it aborts app startup and every
+# route returns 502, /healthz included. It was in pyproject.toml but not here:
+# two dependency manifests, and only one of them got the package.
+python-multipart~=0.0.12
 mangum~=0.19
 pydantic~=2.9
 pydantic-settings~=2.6

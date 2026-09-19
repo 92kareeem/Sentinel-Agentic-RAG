@@ -27,6 +27,12 @@
       ]
     },
     {
+      "Sid": "GroqKeyFromSSM",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter"],
+      "Resource": "arn:aws:ssm:ap-south-1:440744255230:parameter/sentinel/groq-api-key"
+    },
+    {
       "Sid": "Logs",
       "Effect": "Allow",
       "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
