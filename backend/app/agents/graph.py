@@ -22,24 +22,34 @@ from app.models.schemas import RefusalReason, is_insufficient_context, safe_refu
 def grounding_check_node(state: AgentState) -> AgentState:
     """Deterministic grounding gate (guardrails/grounding.py).
 
-    Strips unsupported sentences; if more than MAX_STRIPPED_RATIO of them were
-    stripped the answer is untrustworthy — treated like a critic failure so the
-    repair loop (or refusal) takes over rather than shipping a
-    hallucination-heavy answer. (This docstring previously named a hardcoded
-    30%; the threshold is defined once in grounding.py and is currently 50%.)
+    Strips unsupported sentences, re-points citations that named the wrong
+    passage, and — if more than MAX_STRIPPED_RATIO of sentences were stripped —
+    treats the answer as untrustworthy, so the repair loop (or a refusal) takes
+    over rather than shipping a hallucination-heavy answer.
     """
+    from app.agents.synthesizer import citations_for
     from app.guardrails import grounding
 
-    result = grounding.verify(state["answer"], state["retrieved"])
+    # The user's question is passed so numbers echoed from it are not read as
+    # fabrications: "is 20 days within the window?" invites an answer that
+    # restates 20 while the evidence contains only 30.
+    result = grounding.verify(state["answer"], state["retrieved"], question=state["query"])
     state["trace"].record_step(
-        "grounding_check", 0, stripped_ratio=f"{result.stripped_ratio:.2f}", ok=result.ok
+        "grounding_check",
+        0,
+        stripped_ratio=f"{result.stripped_ratio:.2f}",
+        ok=result.ok,
+        repaired_citations=result.repaired_citations,
     )
     if not result.ok:
         state["status"] = "running"  # routed like a critic failure below
         return state
     state["answer"] = result.clean_answer
-    valid = set(result.valid_chunk_ids)
-    state["citations"] = [c for c in state["citations"] if c.chunk_id in valid]
+    # Rebuilt from the verified ids rather than filtered from what the model
+    # claimed. A repaired citation names a chunk the synthesizer never cited,
+    # so filtering would drop it: the answer text would carry [chunk:x] with no
+    # matching source in the panel, and the chip would silently vanish.
+    state["citations"] = citations_for(result.valid_chunk_ids, state["retrieved"])
     state["status"] = "answered"
     return state
 

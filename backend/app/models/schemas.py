@@ -186,8 +186,24 @@ class ConversationTurn(BaseModel):
 
 
 class QueryRequest(BaseModel):
+    """What a caller may ask for.
+
+    `top_k` used to be declared here and validated (1..20) — and then ignored:
+    retrieval read settings.top_k and nothing ever looked at the field. An
+    accepted-but-ignored parameter is worse than an absent one, because a
+    caller tuning it gets no error and no effect, and concludes the retrieval
+    depth is what they asked for.
+
+    It is removed rather than honoured because retrieval breadth is a server
+    cost lever, not a client preference: every extra chunk is context on two
+    LLM calls per attempt, against a token budget shared by every user of the
+    account. A client able to pass 20 could push a single question past the
+    budget and turn a good answer into a BUDGET_EXHAUSTED refusal for
+    everybody. If per-request depth becomes a real product need it belongs
+    behind explicit budget accounting, not a bare integer.
+    """
+
     query: str = Field(min_length=1, max_length=1000)
-    top_k: int = Field(default=8, ge=1, le=20)
     doc_id: str | None = None  # scope retrieval to one uploaded document; None = all
     conversation_history: list[ConversationTurn] = Field(default_factory=list)
 

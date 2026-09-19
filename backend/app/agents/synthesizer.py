@@ -6,7 +6,9 @@ sentence ends with [chunk:<id>], and INSUFFICIENT_CONTEXT is a valid, honest
 answer the critic must not penalize as a failure.
 """
 
+import re
 import time
+from collections.abc import Iterable
 
 from app.agents.budget import check_budget
 from app.agents.state import AgentState
@@ -37,6 +39,8 @@ _SYSTEM_PROMPT = (
 # background rather than as evidence.
 _MAX_HISTORY_TURNS = 6
 _MAX_HISTORY_CHARS = 400
+
+_CITATION_TAG_RE = re.compile(r"\[chunk:([\w-]+)\]")
 
 
 def _build_context(chunks: list[Chunk]) -> str:
@@ -76,9 +80,21 @@ def _build_user_prompt(state: AgentState) -> str:
     )
 
 
-def _extract_citations(answer: str, chunks: list[Chunk]) -> list[Citation]:
+def citations_for(chunk_ids: Iterable[str], chunks: list[Chunk]) -> list[Citation]:
+    """Citation objects for the given chunk ids, in first-seen order.
+
+    Shared with the grounding gate, which rebuilds the citation list after it
+    may have re-pointed a tag at a different chunk. Two independent
+    constructions would eventually disagree about what a source looks like.
+
+    Order is preserved and duplicates dropped, because the UI numbers these
+    [1], [2], [3] in list order and a set would renumber them on every request.
+    """
     by_id = {c.chunk_id: c for c in chunks}
-    cited_ids = {cid for cid in by_id if f"[chunk:{cid}]" in answer}
+    seen: dict[str, None] = {}
+    for cid in chunk_ids:
+        if cid in by_id:
+            seen.setdefault(cid, None)
     return [
         Citation(
             chunk_id=cid,
@@ -88,8 +104,14 @@ def _extract_citations(answer: str, chunks: list[Chunk]) -> list[Citation]:
             source_filename=getattr(by_id[cid], "source_filename", ""),
             document_id=by_id[cid].doc_id,
         )
-        for cid in cited_ids
+        for cid in seen
     ]
+
+
+def _extract_citations(answer: str, chunks: list[Chunk]) -> list[Citation]:
+    """Citations for every chunk the model tagged, in the order it tagged them."""
+    tagged = [m.group(1) for m in _CITATION_TAG_RE.finditer(answer)]
+    return citations_for(tagged, chunks)
 
 
 def synthesizer_node(state: AgentState) -> AgentState:

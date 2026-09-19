@@ -1,28 +1,22 @@
 """Retriever node: hybrid dense+sparse search fused with RRF.
 
-Role in architecture: loads the FAISS/BM25 artifacts built in P1 once per
-process (module-level globals — reused across warm Lambda invocations) and
-turns a query into ranked Chunk objects. Runs again after repair_rewrite
-with the rewritten query.
+Role in architecture: turns a query into ranked Chunk objects, scoped to what
+the caller is allowed to see. The index itself is owned by
+rag/retriever_snapshot.py, which hands out one immutable, self-consistent view
+per request; this module binds exactly one of those on entry and never reads
+a global mid-search. Runs again after repair_rewrite with the rewritten
+search query.
 """
 
 import re
 import time
-from pathlib import Path
-from typing import Any
-
-import numpy as np
 
 from app.agents.budget import check_budget
 from app.agents.state import AgentState
 from app.config import get_settings
 from app.models.schemas import Chunk
-from app.rag import bm25_store, embeddings, index_store
-
-_index: Any = None
-_chunks: list[Chunk] = []
-_bm25: Any = None
-_version: str | None = None
+from app.rag import bm25_store, embeddings, index_store, retriever_snapshot
+from app.rag.retriever_snapshot import IndexSnapshot
 
 _TERM_RE = re.compile(r"\w+")
 
@@ -73,37 +67,17 @@ def _rerank_candidates(
 
 
 def reset_cache() -> None:
-    """Drop the in-memory index so the next query reloads fresh from S3.
+    """Drop the cached index so the next query reloads it.
 
-    Called after an upload merges a new document — otherwise a warm Lambda
-    would keep serving the pre-upload index until its next cold start.
+    Called after an upload merges a new document — otherwise a warm process
+    would keep serving the pre-upload index until its next cold start. Kept as
+    a thin alias so callers outside rag/ do not need to know where the
+    snapshot lives.
     """
-    global _index, _chunks, _bm25, _version
-    _index, _chunks, _bm25, _version = None, [], None, None
+    retriever_snapshot.invalidate()
 
 
-def _ensure_loaded() -> None:
-    global _index, _chunks, _bm25, _version
-    if _index is None:
-        settings = get_settings()
-        root = Path(settings.index_dir)
-        if settings.use_s3_index:
-            # Lambda: artifacts live in S3; /tmp is the only writable path.
-            # Downloaded once per cold start, reused by every warm invocation.
-            root = Path("/tmp/index")
-            index_store.load_current_from_s3(root)
-        loaded = index_store.load_current(root)
-        if loaded is None:  # nothing published yet — an empty corpus, not an error
-            _index, _chunks, _bm25, _version = index_store.build_faiss(
-                np.zeros((0, 384), dtype=np.float32)
-            ), [], None, None
-            return
-        _index, _chunks, version = loaded
-        _bm25 = index_store.load_bm25(version, root)
-        _version = version
-
-
-def _visible_rows(owner_id: str, doc_id: str | None) -> set[int] | None:
+def _visible_rows(snap: IndexSnapshot, owner_id: str, doc_id: str | None) -> set[int] | None:
     """Row ids this caller is allowed to see.
 
     Returns None when no filtering is needed (no rows are excluded), so the
@@ -121,7 +95,7 @@ def _visible_rows(owner_id: str, doc_id: str | None) -> set[int] | None:
     if doc_id is None and not owner_id:
         return None
     rows = set()
-    for i, chunk in enumerate(_chunks):
+    for i, chunk in enumerate(snap.chunks):
         # Chunks written before owner tracking have owner_id="" and are treated
         # as shared corpus (the seeded demo documents), visible to everyone.
         if chunk.owner_id and owner_id and chunk.owner_id != owner_id:
@@ -139,18 +113,26 @@ def retriever_node(state: AgentState) -> AgentState:
 
     settings = get_settings()
     t0 = time.perf_counter()
-    _ensure_loaded()
+
+    # Bound ONCE, then used for everything below. The index, the chunk list its
+    # row ids point into, and the BM25 model only mean anything together; they
+    # used to be three globals that an upload could swap out from under a
+    # query already running in FastAPI's threadpool. The loud version of that
+    # was an IndexError on `_chunks[row]`; the quiet version returned real
+    # chunk text for row ids belonging to a different index version, so a
+    # citation pointed at the wrong passage with nothing reporting a problem.
+    snap = retriever_snapshot.current()
 
     doc_id = state.get("doc_id")
     owner_id = state.get("user_id", "")
-    allowed = _visible_rows(owner_id, doc_id)
+    allowed = _visible_rows(snap, owner_id, doc_id)
 
     # When scoping/filtering, pull the whole candidate space before filtering so
     # a small document is fully covered rather than being crowded out of a
     # globally-ranked top-N by a larger corpus.
-    cand = _index.ntotal if allowed is not None else settings.candidates_per_retriever
+    cand = snap.index.ntotal if allowed is not None else settings.candidates_per_retriever
 
-    if _index.ntotal == 0 or (allowed is not None and not allowed):
+    if snap.index.ntotal == 0 or (allowed is not None and not allowed):
         state["retrieved"] = []
         state["trace"].record_step(
             "retriever", int((time.perf_counter() - t0) * 1000), chunks=0, scope=doc_id or "all"
@@ -163,8 +145,8 @@ def retriever_node(state: AgentState) -> AgentState:
     # and the critic answer and score against.
     search_query = state["search_query"]
     qvec = embeddings.embed_texts([search_query])[0]
-    dense = [row for row, _ in index_store.search(_index, qvec, cand)]
-    sparse = [row for row, _ in bm25_store.search(_bm25, search_query, cand)]
+    dense = [row for row, _ in index_store.search(snap.index, qvec, cand)]
+    sparse = [row for row, _ in bm25_store.search(snap.bm25, search_query, cand)]
     if allowed is not None:
         dense = [r for r in dense if r in allowed]
         sparse = [r for r in sparse if r in allowed]
@@ -173,7 +155,7 @@ def retriever_node(state: AgentState) -> AgentState:
     ranked_rows = [row for row, _ in fused]
     reranked = _rerank_candidates(
         search_query,
-        [_chunks[row] for row in ranked_rows],
+        [snap.chunks[row] for row in ranked_rows],
         ranked_rows,
         query_terms=_normalize_query_terms(search_query),
     )
@@ -186,6 +168,6 @@ def retriever_node(state: AgentState) -> AgentState:
         duration_ms,
         chunks=len(state["retrieved"]),
         scope=doc_id or "all",
-        index_version=_version or "none",
+        index_version=snap.version or "none",
     )
     return state
