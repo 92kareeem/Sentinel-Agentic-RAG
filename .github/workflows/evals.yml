@@ -1,7 +1,26 @@
 name: Evals
 on:
+  # Only when something that can actually move the numbers changes. A
+  # frontend-only PR used to run the full suite — ~60 Groq calls to prove that
+  # CSS did not affect retrieval quality.
   pull_request:
-  workflow_dispatch:   # manual runs from the Actions tab
+    paths:
+      - "backend/**"
+      - "evals/**"
+      - "ingestion/**"
+      - "docs/**" # the eval corpus lives here
+      - "pyproject.toml"
+      - ".github/workflows/evals.yml"
+  workflow_dispatch: # manual runs from the Actions tab
+
+# Groq's free tier is rate-limited per ACCOUNT, not per run. Four PRs opened
+# together previously fired four concurrent suites and 429'd each other into
+# failure — a red X caused entirely by contention rather than by any
+# regression. Serialize instead: queue runs rather than cancelling them, since
+# an eval result is the point of the job.
+concurrency:
+  group: evals-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
   evals:

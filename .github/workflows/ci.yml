@@ -113,11 +113,20 @@ jobs:
           echo "--- response ---"; cat /tmp/out.json; echo
           echo "--- container logs ---"; docker logs sentinel-ci
 
-          # An import-time crash still returns HTTP 200 from the emulator, with
-          # the traceback in the body — so assert on the payload, not the exit
-          # code of curl.
-          grep -q '"statusCode": *200' /tmp/out.json
-          grep -q '"status":"ok"' /tmp/out.json
+          # Assert on the PARSED payload, not with grep. An import-time crash
+          # still returns HTTP 200 from the emulator (with the traceback in the
+          # body), so curl's exit code proves nothing — and the body is a
+          # JSON-ESCAPED string inside the envelope, so grepping for
+          # '"status":"ok"' never matches the literal bytes '\"status\":\"ok\"'.
+          # Parsing both layers is the only assertion that means what it says.
+          python3 - <<'PY'
+          import json, sys
+          env = json.load(open("/tmp/out.json"))
+          assert env.get("statusCode") == 200, f"statusCode={env.get('statusCode')}: {env}"
+          body = json.loads(env["body"])
+          assert body.get("status") == "ok", f"unexpected body: {body}"
+          print("container healthy:", body)
+          PY
 
       - name: Clean up
         if: always()
