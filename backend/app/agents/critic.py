@@ -12,10 +12,9 @@ import json
 import time
 from typing import Any
 
-from app.agents.budget import check_budget
+from app.agents.budget import check_budget, llm_call
 from app.agents.state import AgentState
 from app.config import get_settings
-from app.llm import groq_client
 from app.models.schemas import CriticScores
 
 _SYSTEM_PROMPT = (
@@ -27,8 +26,12 @@ _SYSTEM_PROMPT = (
 )
 
 
-def _judge_once(query: str, context: str, answer: str, model: str) -> dict[str, Any]:
-    content, tokens_in, tokens_out = groq_client.chat_completion(
+def _judge_once(
+    state: AgentState, query: str, context: str, answer: str, model: str
+) -> dict[str, Any] | None:
+    """One grading call. None means the request's deadline ran out inside it."""
+    out = llm_call(
+        state,
         model=model,
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
@@ -40,6 +43,9 @@ def _judge_once(query: str, context: str, answer: str, model: str) -> dict[str, 
         max_tokens=300,
         json_mode=True,
     )
+    if out is None:
+        return None
+    content, tokens_in, tokens_out = out
     return {"data": json.loads(content), "tokens_in": tokens_in, "tokens_out": tokens_out}
 
 
@@ -56,7 +62,11 @@ def critic_node(state: AgentState) -> AgentState:
     result = None
     for _ in range(2):  # one re-ask on parse failure
         try:
-            out = _judge_once(state["query"], context, state["answer"], settings.groq_model_simple)
+            out = _judge_once(
+                state, state["query"], context, state["answer"], settings.groq_model_simple
+            )
+            if out is None:  # deadline ran out mid-call; llm_call already refused
+                return state
             tokens_in += out["tokens_in"]
             tokens_out += out["tokens_out"]
             result = out["data"]

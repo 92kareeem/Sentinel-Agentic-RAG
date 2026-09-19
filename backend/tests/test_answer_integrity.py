@@ -116,10 +116,13 @@ def test_repair_rewrite_changes_the_search_query_not_the_users_question(
     the reformulation and the critic scored relevance against it too: every
     stage agreed on a well-cited answer to a question nobody asked.
     """
-    from app.agents import repair
+    from app.llm import groq_client
 
+    # Patched on groq_client itself, not on the node: every LLM call in the
+    # graph now goes through budget.llm_call, which imports the client lazily
+    # so the deadline can be attached in one place.
     monkeypatch.setattr(
-        repair.groq_client,
+        groq_client,
         "chat_completion",
         lambda **_: ("annual subscription refund window policy", 10, 5),
     )
@@ -137,7 +140,7 @@ def test_a_rewrite_rewrites_the_original_question_not_the_previous_rewrite(
     monkeypatch: Any,
 ) -> None:
     """Chaining rewrites compounds drift; each one starts from what was asked."""
-    from app.agents import repair
+    from app.llm import groq_client
 
     seen: list[str] = []
 
@@ -145,7 +148,7 @@ def test_a_rewrite_rewrites_the_original_question_not_the_previous_rewrite(
         seen.append(kw["messages"][-1]["content"])
         return ("reformulated", 10, 5)
 
-    monkeypatch.setattr(repair.groq_client, "chat_completion", fake)
+    monkeypatch.setattr(groq_client, "chat_completion", fake)
 
     state = _state(search_query="an earlier reformulation")
     repair_rewrite_node(state)
@@ -156,9 +159,9 @@ def test_a_rewrite_rewrites_the_original_question_not_the_previous_rewrite(
 def test_an_empty_rewrite_falls_back_without_clobbering_the_search_query(
     monkeypatch: Any,
 ) -> None:
-    from app.agents import repair
+    from app.llm import groq_client
 
-    monkeypatch.setattr(repair.groq_client, "chat_completion", lambda **_: ("   ", 5, 1))
+    monkeypatch.setattr(groq_client, "chat_completion", lambda **_: ("   ", 5, 1))
 
     out = repair_rewrite_node(_state(search_query="prior search terms"))
     assert out["search_query"] == "prior search terms"
