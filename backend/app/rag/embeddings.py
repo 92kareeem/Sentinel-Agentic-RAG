@@ -30,6 +30,32 @@ from app.config import get_settings
 # so contention is irrelevant, and only one embedding backend is ever active.
 _init_lock = threading.Lock()
 
+# Guards USE of the torch model's tokenizer, which is a different problem from
+# guarding its construction.
+#
+# SentenceTransformer exposes one HuggingFace fast tokenizer, and this module
+# calls it two ways: token_offsets() asks for offset mappings with
+# truncation=False, while encode() tokenizes for the model with truncation on.
+# The HF wrapper applies those settings by MUTATING the underlying Rust
+# tokenizer before each call, so a mutation racing an in-flight encode fails
+# with "RuntimeError: Already borrowed" — Rust refusing a mutable borrow while
+# a shared one is live.
+#
+# Reachable in normal operation: chunking calls token_offsets() OUTSIDE the
+# index publication lock, so two documents ingesting at once in one process
+# hit exactly this pair of calls concurrently. It surfaced as a test that
+# failed roughly one run in five with an error that names nothing in this
+# codebase.
+#
+# One lock over both uses rather than a second tokenizer instance: it needs no
+# extra model load, and the serialised sections are short next to the model
+# forward pass, which is already serialised during publication anyway.
+#
+# The ONNX path does not need this. It builds two separate tokenizers.Tokenizer
+# objects and configures each once, under _init_lock, before publishing it —
+# after that every call is read-only.
+_torch_tokenizer_lock = threading.Lock()
+
 _model: Any = None  # sentence_transformers.SentenceTransformer, loaded lazily
 
 
@@ -105,9 +131,11 @@ def embed_texts(texts: list[str]) -> np.ndarray:
     """
     if get_settings().embed_backend == "onnx":
         return _embed_onnx(texts)
-    vecs = get_model().encode(
-        texts, normalize_embeddings=True, convert_to_numpy=True, show_progress_bar=False
-    )
+    model = get_model()  # loaded outside the lock; only the call is serialised
+    with _torch_tokenizer_lock:
+        vecs = model.encode(
+            texts, normalize_embeddings=True, convert_to_numpy=True, show_progress_bar=False
+        )
     return np.asarray(vecs, dtype=np.float32)
 
 
@@ -145,7 +173,9 @@ def token_offsets(text: str) -> list[tuple[int, int]]:
     """
     if get_settings().embed_backend == "onnx":
         return _onnx_token_offsets(text)
-    enc = get_model().tokenizer(
-        text, return_offsets_mapping=True, add_special_tokens=False, truncation=False
-    )
+    tokenizer = get_model().tokenizer
+    with _torch_tokenizer_lock:
+        enc = tokenizer(
+            text, return_offsets_mapping=True, add_special_tokens=False, truncation=False
+        )
     return [(int(a), int(b)) for a, b in enc["offset_mapping"] if b > a]
