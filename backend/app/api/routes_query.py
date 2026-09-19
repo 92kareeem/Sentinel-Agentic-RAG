@@ -21,8 +21,10 @@ from app.models.schemas import (
     CriticScores,
     QueryRequest,
     QueryResponse,
+    RefusalReason,
     RefusalResponse,
     TokenUsage,
+    is_insufficient_context,
 )
 from app.observability.logging import get_logger
 from app.observability.tracing import TraceRecorder, put_trace
@@ -89,6 +91,7 @@ def query(
         "citations": [],
         "critic": None,
         "status": "running",
+        "refusal_reason": None,
         "conversation_history": history,
     }
     t0 = time.perf_counter()
@@ -117,13 +120,17 @@ def query(
         raise HTTPException(status_code=503, detail="upstream LLM error — please retry") from exc
 
     latency_ms = int((time.perf_counter() - t0) * 1000)
-    refused = result["status"] == "refused" or result["answer"].strip() == "INSUFFICIENT_CONTEXT"
+    refused = result["status"] == "refused" or is_insufficient_context(result["answer"])
     put_trace(trace.to_dict("refused" if refused else "answered"))
 
     if refused:
         return RefusalResponse(
             trace_id=trace.trace_id,
             reason=result["answer"],
+            # Falls back to INSUFFICIENT_EVIDENCE for the one path that reaches
+            # here without passing through refusal_node: the synthesizer
+            # returning the sentinel with status still "running".
+            reason_code=result.get("refusal_reason") or RefusalReason.INSUFFICIENT_EVIDENCE,
             best_effort_context=[c.chunk_id for c in result["retrieved"]],
         )
     return QueryResponse(

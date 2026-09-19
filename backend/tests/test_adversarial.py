@@ -91,6 +91,7 @@ def test_injected_document_text_is_framed_as_data_not_instructions() -> None:
         "citations": [],
         "critic": None,
         "status": "running",
+        "refusal_reason": None,
         "conversation_history": [],
     }
     prompt = synthesizer._build_user_prompt(state)
@@ -124,6 +125,7 @@ def test_injection_via_conversation_history_is_bounded_and_labelled() -> None:
         "citations": [],
         "critic": None,
         "status": "running",
+        "refusal_reason": None,
         "conversation_history": [{"role": "user", "content": INJECTION_TEXT}],
     }
     prompt = synthesizer._build_user_prompt(state)

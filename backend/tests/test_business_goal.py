@@ -88,6 +88,7 @@ def _retrieve(query: str, *, owner: str, doc_id: str | None) -> list:
         "citations": [],
         "critic": None,
         "status": "running",
+        "refusal_reason": None,
         "conversation_history": [],
     }
     retriever.retriever_node(state)

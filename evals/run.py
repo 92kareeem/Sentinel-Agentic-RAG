@@ -63,7 +63,7 @@ def run_item(graph, item: dict) -> dict:
         "token_budget_left": settings.token_budget,
         "deadline_ts": time.monotonic() + settings.deadline_seconds,
         "retrieved": [], "answer": "", "citations": [], "critic": None,
-        "status": "running", "conversation_history": [],
+        "status": "running", "refusal_reason": None, "conversation_history": [],
     }
     t0 = time.perf_counter()
     result = graph.invoke(state)
