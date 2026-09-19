@@ -142,3 +142,69 @@ def test_offsets_tokenizer_is_never_visible_while_it_still_truncates(
     assert not errors, errors
     assert observed_truncating, "no thread reached encode()"
     assert not any(observed_truncating), "a thread used a still-truncating tokenizer"
+
+
+def test_offsets_and_encode_never_touch_the_shared_tokenizer_at_once() -> None:
+    """The torch backend's two tokenizer callers must not overlap.
+
+    SentenceTransformer exposes ONE HuggingFace fast tokenizer, and this module
+    calls it two ways: token_offsets() wants offset mappings with
+    truncation=False, encode() tokenizes for the model with truncation on. The
+    HF wrapper applies those settings by mutating the underlying Rust
+    tokenizer, so a mutation racing an in-flight encode raises
+
+        RuntimeError: Already borrowed
+
+    Reachable in normal operation, not only in tests: chunking calls
+    token_offsets() OUTSIDE the index publication lock, so two documents
+    ingesting at once in one process hit exactly this pair concurrently. It
+    showed up as a suite that failed about one run in five with an error
+    naming nothing in this codebase.
+
+    Driven with a fake tokenizer that RECORDS overlap rather than with the
+    real one: the genuine failure depends on Rust borrow timing and reproduces
+    intermittently, whereas "these two callers are never inside the tokenizer
+    together" is the invariant that actually matters and can be asserted every
+    run.
+    """
+    overlapping: list[str] = []
+    inside = threading.Lock()
+    occupants: list[str] = []
+
+    def enter(who: str) -> None:
+        with inside:
+            occupants.append(who)
+            if len(occupants) > 1:
+                overlapping.append(",".join(sorted(occupants)))
+        time.sleep(0.01)  # hold the tokenizer long enough for a race to show
+        with inside:
+            occupants.remove(who)
+
+    class FakeTokenizer:
+        def __call__(self, text: str, **kw: Any) -> dict[str, Any]:
+            enter("offsets")  # mirrors token_offsets(): mutates truncation
+            return {"offset_mapping": [(0, 5)]}
+
+    class FakeModel:
+        tokenizer = FakeTokenizer()
+
+        def encode(self, texts: list[str], **kw: Any) -> Any:
+            import numpy as np
+
+            enter("encode")
+            return np.zeros((len(texts), 384), dtype="float32")
+
+    embeddings._model = FakeModel()
+    try:
+        errors = _run_concurrently(
+            lambda: (
+                embeddings.token_offsets("some section text"),
+                embeddings.embed_texts(["some section text"]),
+            ),
+            n=6,
+        )
+    finally:
+        embeddings._model = None
+
+    assert not errors, errors
+    assert not overlapping, f"tokenizer used concurrently by {set(overlapping)}"
