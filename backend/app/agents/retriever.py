@@ -115,9 +115,9 @@ def retriever_node(state: AgentState) -> AgentState:
     t0 = time.perf_counter()
 
     # Bound ONCE, then used for everything below. The index, the chunk list its
-    # row ids point into, and the BM25 model only mean anything together; they
-    # used to be three globals that an upload could swap out from under a
-    # query already running in FastAPI's threadpool. The loud version of that
+    # row ids point into, the BM25 model and the version only mean anything
+    # together; they used to be four globals that an upload could swap out from
+    # under a query already running in FastAPI's threadpool. The loud form of that
     # was an IndexError on `_chunks[row]`; the quiet version returned real
     # chunk text for row ids belonging to a different index version, so a
     # citation pointed at the wrong passage with nothing reporting a problem.

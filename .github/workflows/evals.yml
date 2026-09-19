@@ -8,7 +8,7 @@ on:
       - "backend/**"
       - "evals/**"
       - "ingestion/**"
-      - "docs/**" # the eval corpus lives here
+      - "corpus/**" # the documents the evals retrieve from
       - "pyproject.toml"
       - ".github/workflows/evals.yml"
   workflow_dispatch: # manual runs from the Actions tab
@@ -35,8 +35,17 @@ jobs:
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -e .
-      - name: Build index from corpus
-        run: python -m ingestion.ingest ./docs
+      # ./corpus, NOT ./docs. The ingester takes every .md under the folder it
+      # is given, so pointing it at ./docs indexed this repository's own
+      # engineering documentation alongside the demo business documents — and
+      # the golden dataset asserts that "what is the company's parental leave
+      # policy?" and "which cloud provider hosts the infrastructure?" are
+      # UNANSWERABLE. An ADR discussing a parental-leave example, or a system
+      # guide naming AWS on every page, is enough to turn a correct refusal
+      # into a confident answer and fail the refusal gate for a documentation
+      # change. Engineering docs are not corpus.
+      - name: Build index from the demo corpus
+        run: python -m ingestion.ingest ./corpus
         working-directory: .
         env:
           PYTHONPATH: backend

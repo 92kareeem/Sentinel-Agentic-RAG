@@ -21,7 +21,7 @@ install: venv
 
 # Build FAISS + BM25 + chunks.jsonl from ./docs into ./index
 ingest:
-	$(PY) -m ingestion.ingest ./docs
+	$(PY) -m ingestion.ingest ./corpus
 
 # Retrieval-only smoke test against the built index
 smoke:
