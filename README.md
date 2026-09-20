@@ -126,7 +126,7 @@ These are deliberate scope boundaries, not oversights:
 | State                        | DynamoDB (traces, API keys)                           | Serverless, single-digit-ms reads, no schema migrations                |
 | Auth                         | API Gateway usage plans + hashed keys in DynamoDB     | Two layers of protection, no Cognito overhead                          |
 | Frontend                     | React + TypeScript on CloudFront                      | Static hosting, cheap, edge-cached                                     |
-| Tests                        | pytest, GitHub Actions on push                        | Ingestion, retrieval, agent nodes, guardrails, end-to-end              |
+| Tests                        | pytest on every PR; evals nightly or on a `run-evals` label | Unit CI is fast and always on; the eval suite paces itself around a rate limit, so it is opt-in |
 
 ---
 
@@ -140,7 +140,7 @@ evals/              Evaluation harness, golden dataset, report generator
 docker/             Lambda container image
 corpus/             The demo business documents — the ONLY thing that gets indexed
 docs/               Engineering documentation and ADRs (deliberately NOT corpus)
-.github/workflows/  CI — lint, test, eval on push
+.github/workflows/  ci.yml (every PR) and evals.yml (nightly, or per-PR via label)
 ```
 
 ---

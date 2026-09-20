@@ -1,16 +1,32 @@
 name: Evals
 on:
-  # Only when something that can actually move the numbers changes. A
-  # frontend-only PR used to run the full suite — ~60 Groq calls to prove that
-  # CSS did not affect retrieval quality.
+  # The suite takes ~8 minutes, and roughly seven of those are the harness
+  # deliberately sleeping to stay under Groq's free-tier 8,000 tokens/minute.
+  # That is the right trade for a gate you believe, but it is the wrong thing
+  # to make every backend PR wait on: a one-line change to a log message used
+  # to sit behind sixty paced LLM calls proving retrieval had not regressed.
+  #
+  # So the gate is opt-in per PR and automatic on a schedule:
+  #
+  #   - add the "run-evals" label to a PR that could move the numbers
+  #     (retrieval, prompts, the graph, the corpus, the judge)
+  #   - the nightly run covers main whether or not anyone remembered
+  #   - workflow_dispatch for a one-off from the Actions tab
+  #
+  # The path filter that used to live here is gone on purpose. It guessed at
+  # which diffs mattered, and it guessed wrong in both directions: it fired on
+  # backend changes that could not affect answer quality, and it stayed quiet
+  # for prompt edits that live outside the filtered paths. A label is a person
+  # saying "this one needs checking", which is the judgement the filter was
+  # standing in for.
   pull_request:
-    paths:
-      - "backend/**"
-      - "evals/**"
-      - "ingestion/**"
-      - "corpus/**" # the documents the evals retrieve from
-      - "pyproject.toml"
-      - ".github/workflows/evals.yml"
+    types: [labeled, synchronize, reopened]
+  # Nightly against main. The numbers can move without anyone touching the
+  # repository: this project pins a hosted model, and a previous Groq
+  # deprecation broke the judge silently. A scheduled run turns that from
+  # "discovered during the next release" into "a red X the morning after".
+  schedule:
+    - cron: "17 3 * * *" # 03:17 UTC, off the hour where runner queues are shortest
   workflow_dispatch: # manual runs from the Actions tab
 
 # Groq's free tier is rate-limited per ACCOUNT, not per run. Four PRs opened
@@ -24,6 +40,20 @@ concurrency:
 
 jobs:
   evals:
+    # `labeled` fires for ANY label, and `synchronize` fires on every push to
+    # an open PR, so the trigger alone is not the gate — this is. A push to a
+    # labelled PR re-runs the suite (the numbers are about the code, so they
+    # have to track it); a push to an unlabelled one does nothing.
+    #
+    # Fork PRs cannot read GROQ_API_KEY, so the suite would fail on a missing
+    # key rather than on a regression. Restrict to same-repo branches and say
+    # so out loud; pull_request_target would fix it by running untrusted code
+    # with access to the secret, which is not a trade worth making for a
+    # quality gate.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(github.event.pull_request.labels.*.name, 'run-evals'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
