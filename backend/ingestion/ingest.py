@@ -1,7 +1,7 @@
 """Ingestion CLI: build the hybrid index from a folder of documents.
 
 Usage:
-    python -m ingestion.ingest ./docs            # chunk + embed + write index/
+    python -m ingestion.ingest ./corpus          # chunk + embed + write index/
     python -m ingestion.ingest --smoke-only "your question"   # query existing index
 
 Role in architecture: the offline half of RAG. Runs on your laptop (or CI),
@@ -20,6 +20,13 @@ from app.rag import bm25_store, embeddings, index_store
 from app.rag.pdf import PdfExtractionError
 
 SUPPORTED = {".md", ".txt", ".pdf"}
+
+# NOTE ON WHAT YOU POINT THIS AT: it takes EVERY supported file under the
+# folder, recursively. Pointing it at ./docs (which it used to be) indexed
+# this repository's own engineering documentation as if it were business
+# content — so a question about the company's cloud provider could be answered
+# from the system guide, and the golden dataset asserts that exact question is
+# unanswerable. The demo corpus lives in ./corpus for that reason.
 
 
 def _corpus_doc_id(path: Path) -> str:

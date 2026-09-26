@@ -747,28 +747,41 @@ actually reports; there is no invented percentage.
 Stated plainly, because a system whose limits are documented is more
 trustworthy than one whose limits are discovered.
 
-1. **Distributed index writes are not safe.** 📐 The publication CAS and the
-   ingestion lock are both *process-local*. Two concurrent Lambda instances can
-   each read v10, each build v11, and each publish — losing one document with
-   no error. Correct for single-process/local operation; **not** correct for
-   concurrent serverless writers. Fixing this needs a DynamoDB conditional-write
-   lock around the read–modify–publish critical section. Not yet implemented.
-2. **No OCR.** Image-only PDFs are rejected, clearly.
-3. **No semantic entailment guarantee.** See §6.5.
-4. **Prompt-injection defense is mitigation, not proof.**
-5. **Synchronous ingestion.** Upload blocks until indexed; fine for 1 MB
+1. **No OCR.** Image-only PDFs are rejected, clearly.
+2. **No semantic entailment guarantee.** See §6.5. The grounding gate proves a
+   claim's words and numbers appear in the passage it cites; it cannot prove
+   the passage *means* what the claim says.
+3. **Conversational references are not resolved before retrieval.** "What about
+   contractors?" is embedded literally. The synthesizer sees history and often
+   recovers, but retrieval searched for the wrong thing — so on a follow-up the
+   evidence set may simply not contain the answer.
+4. **Whole-document questions are not served correctly.** "List every
+   exception" needs coverage, and top-k retrieval returns the *most similar* k
+   passages, which is a different thing. The answer will look complete and may
+   not be. There is no detection for this today.
+5. **Supersession is not modelled.** Two documents stating different refund
+   windows are two pieces of evidence. Nothing marks one as current, and upload
+   order is not evidence of authority.
+6. **Prompt-injection defense is mitigation, not proof.**
+7. **Synchronous ingestion.** Upload blocks until indexed; fine for 1 MB
    documents, not for large corpora.
-6. **The index is rebuilt in full on each publish.** Correct and simple;
+8. **The index is rebuilt in full on each publish.** Correct and simple;
    O(corpus) per upload. Appropriate for a bounded corpus, not for 100k
    documents.
-7. **The browser holds an API key.** `VITE_API_KEY` is baked into the bundle
+9. **The browser holds an API key.** `VITE_API_KEY` is baked into the bundle
    and extractable. Acceptable for local development and a quota-limited demo;
-   not acceptable as production authentication.
-8. **No true token streaming.**
-9. **External LLM dependency.** Groq outage → 503, with a circuit breaker to
-   fail fast rather than pile up.
-10. **AWS deployment is statically reviewed, not live-verified.** 📐
-    `infra/deploy.sh` has been written and read but never executed end-to-end.
+   not acceptable as production authentication. There is one identity per key,
+   so there is no concept of a *person* — only of a tenant.
+10. **Deleting a document stops it being retrievable, but does not erase it
+    from history.** The chunks leave the live index immediately; superseded
+    index versions on disk still contain them until pruned.
+11. **No true token streaming.** Deliberate: content is released after
+    verification, and streaming unverified tokens would contradict the
+    product's one promise. The cost is that the user waits with no partial
+    output.
+12. **External LLM dependency.** Groq outage → 503, with a circuit breaker to
+    fail fast rather than pile up. Evidence also leaves AWS to reach Groq,
+    which is a data-boundary decision a buyer may need to approve.
 
 ---
 
@@ -779,15 +792,22 @@ demands it, not in anticipation.
 
 | Trigger | Change |
 |---|---|
-| Concurrent writers | DynamoDB conditional-write lock (limitation #1) |
+| Follow-up questions retrieve badly | Resolve references into a standalone search query (`search_query` already exists for exactly this) |
+| "List every X" answers come back short | Coverage-oriented traversal, and say so when coverage is incomplete |
+| Two documents disagree | Effective dates and approval status on the document record; surface the conflict rather than picking |
 | Ingestion exceeds request timeout | S3 event → SQS → worker; status already models async |
 | Corpus outgrows full rebuild | Incremental index updates |
 | FAISS flat search too slow | IVF/HNSW, or a managed vector store |
 | Retrieval hit-rate degrades | Reranker — on evidence, not by default |
 | Multi-user product | Real identity (OIDC) replacing API keys |
 
-The order matters: **the lock is the only one that is a correctness issue.**
-Everything else is a performance or scale trigger.
+The first three are **correctness** triggers: the system can be confidently
+wrong in each case, and being confidently wrong is the one failure this product
+is not allowed to have. The rest are performance or scale triggers, and should
+be taken when a measurement demands it rather than in anticipation.
+
+The previous entry at the top of this table — a DynamoDB conditional-write lock
+for concurrent writers — has since been built (`rag/index_lock.py`).
 
 ---
 
@@ -796,12 +816,14 @@ Everything else is a performance or scale trigger.
 ```
 backend/app/
 ├── api/            routes_query · routes_ingest · routes_traces · routes_health
+│                   routes_insights    (the knowledge-gap report)
 ├── agents/         graph · router · retriever · synthesizer · critic · repair
 │                   state · budget
 ├── guardrails/     auth · input_validation · injection · pii · quota
 │                   cost_governor · grounding
 ├── rag/            pdf · chunking · embeddings · index_store · bm25_store
-│                   ingest_runtime
+│                   ingest_runtime · index_lock · retriever_snapshot
+├── learning/       casebook            (why answers failed, what to do)
 ├── documents/      registry            (document identity + lifecycle)
 ├── llm/            groq_client         (retries, circuit breaker, budgets)
 ├── models/         schemas.py          (the API contract, as code)
@@ -817,7 +839,7 @@ infra/              deploy.sh · IAM · DynamoDB · S3 · CloudFront specs
 
 ## 15. How to think about Sentinel
 
-Five systems, stacked:
+Six systems, stacked:
 
 1. **Document intelligence** — turn a file into retrievable, cited units of
    text without losing structure or provenance.
@@ -826,9 +848,137 @@ Five systems, stacked:
 4. **Verification** — refuse to ship what cannot be supported.
 5. **Product/infrastructure** — make all of that observable, bounded, and
    usable.
+6. **Learning** — record what could not be answered, and tell the person who
+   can fix it.
 
 Layer 4 is what makes this a *product* rather than a demo. Layers 1–3 exist in
 every RAG tutorial. The engineering value is concentrated in the discipline of
 layer 4 and in the honesty of knowing which guarantees are real (citation
 validity, numeric grounding, tenant isolation) and which are approximations
 (semantic entailment, injection resistance).
+
+Layer 6 is what makes it worth *keeping*. See §16.
+
+---
+
+## 16. The casebook: how Sentinel improves between requests
+
+### The distinction that matters: recovery vs learning
+
+"Self-healing" in most agent systems means what §6 describes — a failed check
+triggers a retry with a different strategy, and the request either recovers or
+refuses. That is real and useful, and it is entirely **within one request**.
+
+Watch what happens after it:
+
+```
+Monday    Alice asks about contractor parental leave.
+          Retrieval finds nothing. One rewrite. Still nothing. Refusal.
+          Alice asks a colleague instead.
+
+Tuesday   Bob asks the same thing in different words.
+          Identical work. Identical refusal. Identical cost.
+
+...forever.
+```
+
+The system handled both perfectly and learned nothing. Worse, the failure is
+*invisible* precisely because it was handled politely — nobody escalates a
+polite refusal.
+
+The gap is not technical. It is that **nobody owns the failure**. When Sentinel
+refuses, it has established a fact about the corpus: nothing here covers
+contractor parental leave. The document owner — the one person who could write
+that paragraph — never hears it.
+
+### What was built
+
+Every poorly-handled question becomes a **case**: the question, a diagnosis,
+and the evidence state that produced it (`learning/casebook.py`).
+
+The diagnosis taxonomy is organised by **who can fix it**, because that is the
+only thing a reader needs from it:
+
+| Diagnosis | Meaning | Who acts |
+|---|---|---|
+| `NO_EVIDENCE_FOUND` | retrieval returned nothing in scope | document owner |
+| `EVIDENCE_OFF_TOPIC` | passages found, none addressed it | document owner |
+| `ANSWER_UNVERIFIABLE` | evidence was there, verification failed | engineering |
+| `CITATION_MISATTRIBUTED` | answered, but attribution needed repair | engineering |
+| `CAPACITY_EXCEEDED` | a limit fired before it got a fair run | neither |
+
+Only the first two reach the gap report. Sending a document owner to write a
+policy that would not have helped is worse than sending them nothing — a report
+that cries wolf gets read exactly once.
+
+`CITATION_MISATTRIBUTED` is worth dwelling on: the answer **shipped**. It is a
+success with a quality signal attached, and it is the only way anyone learns
+the corpus has near-duplicate or superseded passages saying similar things.
+
+### Why diagnosis has no LLM in it
+
+It would be more nuanced with one. It would also mean every failure costs
+another provider call at the exact moment the system is already under strain,
+and would put diagnosis on the same rate limit as answering.
+
+A burst of hard questions must not make the thing that *explains* the burst the
+next thing to fail. That is not hypothetical here — a Groq rate-limit storm has
+already turned this project's CI red once.
+
+### Why questions are clustered
+
+The unit of work for a document owner is a **topic**, not a question. Six
+people asking the same thing six ways is one missing paragraph; a flat list of
+200 refusals is a report nobody reads twice.
+
+Clustering is greedy, single-pass, on shared content words, with overlap
+measured against the *smaller* question rather than the union — so "refund
+window?" and "what is the refund window for annual plans bought in the EU?"
+cluster together instead of being pushed apart by length.
+
+Term overlap rather than embeddings, on purpose: it is free, stateless, cannot
+fail during a provider outage, and is **explainable** to the person acting on
+it. In a report someone acts on, explainability beats marginal accuracy.
+Embedding the questions is the natural upgrade if clusters get noisy at real
+volume, and the interface does not change.
+
+### Two numbers that are easy to get wrong
+
+**The answer rate needs a denominator the casebook does not have.** The
+casebook records failures only. Deriving a rate from it would report something
+near zero and make a healthy system look broken. Volume is therefore counted
+separately — two integers per owner per day, incremented with a DynamoDB `ADD`,
+which is atomic and needs no prior read, so two instances answering at once
+cannot lose a count.
+
+**An empty workspace reports 100%, not 0%.** No denominator is not a bad score,
+and 0% is the first thing a stakeholder would see on a fresh demo.
+
+### What it costs to run
+
+Nothing new. Cases live in the **existing** documents table under
+`pk="CASE#<owner>"` with a time-ordered sort key, so a 30-day window is one
+Query with a key condition and no filter scan — the same trick as the
+publication lock row. No new table, no GSI, no IAM change.
+
+Storage grows with **failures**, not with traffic, which is the right shape: a
+system that is working well writes almost nothing.
+
+### The guarantee around it
+
+Capture can never fail a request. Persistence is wrapped at the call site, not
+per-writer, so the guarantee holds however many things it grows to record.
+
+A case is a byproduct of answering. Letting its write fail the request would
+mean a user who asked a hard question loses their answer *because* it was hard
+— which inverts the purpose of a feature whose entire job is to make hard
+questions better over time.
+
+### What this sets up next
+
+The report is the input to the ratchet: recurring cases get promoted into the
+golden dataset, so once a gap is closed, CI proves it stays closed. That is
+what "mistakes should not be repeated" actually requires — not cleverer
+recovery, but a test that did not exist before the failure did.
+
+See ADR 0007.

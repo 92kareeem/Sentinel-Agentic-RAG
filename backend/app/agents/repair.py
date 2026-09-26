@@ -8,10 +8,9 @@ table in graph.py.
 
 import time
 
-from app.agents.budget import check_budget
+from app.agents.budget import check_budget, llm_call
 from app.agents.state import AgentState
 from app.config import get_settings
-from app.llm import groq_client
 
 _REWRITE_PROMPT = (
     "Rewrite the user's question to be more specific and retrieval-friendly, "
@@ -27,7 +26,8 @@ def repair_rewrite_node(state: AgentState) -> AgentState:
 
     settings = get_settings()
     t0 = time.perf_counter()
-    content, tokens_in, tokens_out = groq_client.chat_completion(
+    out = llm_call(
+        state,
         model=settings.groq_model_simple,
         messages=[
             {"role": "system", "content": _REWRITE_PROMPT},
@@ -37,6 +37,9 @@ def repair_rewrite_node(state: AgentState) -> AgentState:
         ],
         max_tokens=100,
     )
+    if out is None:  # deadline ran out mid-call; llm_call already refused
+        return state
+    content, tokens_in, tokens_out = out
     # Writes search_query, never query. Overwriting the user's question here
     # made every downstream node answer and grade the reformulation instead:
     # the rewrite is tuned for keyword recall ("annual subscription refund

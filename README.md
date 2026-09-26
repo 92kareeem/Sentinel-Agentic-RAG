@@ -3,8 +3,10 @@
 A guardrailed, self-healing retrieval-augmented generation platform for document Q&A: every answer is cited to a page, and unverifiable answers are refused rather than guessed.
 
 > **Verification status.** Local and CI paths are verified by the test suite and the eval
-> harness. The AWS deployment path in `infra/` is written and statically reviewed but has
-> **not** been executed end-to-end. See [Known limitations](#known-limitations).
+> harness. The AWS deployment in `infra/` has been executed end-to-end and is serving:
+> CloudFront frontend, Lambda container behind a Function URL, DynamoDB, S3, and the Groq
+> key in an SSM SecureString. See [Known limitations](#known-limitations) for what is
+> still not true of it.
 
 **Stack:** FastAPI · LangGraph · Hybrid FAISS + BM25 (RRF) · Groq (`openai/gpt-oss-20b` synthesis/critic, `120b` escalation) · AWS Lambda + DynamoDB + S3 + CloudFront · pytest · GitHub Actions
 
@@ -17,24 +19,34 @@ Most RAG systems are one-shot: retrieve, generate, ship. When retrieval misses o
 Sentinel wraps the pipeline in a LangGraph agent that grades its own output and repairs it before responding.
 
 ```
-                ┌─────────┐
-   query ──────▶│ router  │─── simple? ──▶ direct answer
-                └────┬────┘
-                     │ complex
-                     ▼
-                ┌─────────┐    ┌──────────────┐
-                │retriever│───▶│ synthesiser  │
-                └─────────┘    └──────┬───────┘
-                                      ▼
-                                ┌─────────┐
-                                │ critic  │
-                                └────┬────┘
-                                     │ low-confidence
-                                     ▼
-                                ┌─────────┐
-                                │ repair  │──── loop back to retriever
-                                └─────────┘
+              ┌────────┐    ┌───────────┐    ┌─────────────┐
+  query ─────▶│ router │───▶│ retriever │───▶│ synthesiser │
+              └────────┘    └───────────┘    └──────┬──────┘
+               picks the      always runs           │
+               model, not     — there is no         ▼
+               whether to     answer-without-  ┌────────┐
+               retrieve       retrieval path   │ critic │
+                                               └───┬────┘
+                          ┌────────────────────────┤
+                          │ low confidence         │ passes
+                          ▼                        ▼
+                    ┌──────────┐            ┌───────────┐
+                    │  repair  │            │ grounding │
+                    │ rewrite  │            │   gate    │
+                    │ escalate │            └─────┬─────┘
+                    └────┬─────┘      deterministic│
+                         │ re-runs                 │
+                         │ retrieval    ┌──────────┴──────────┐
+                         └──────────────┤ ships / repairs /   │
+                                        │ refuses             │
+                                        └─────────────────────┘
 ```
+
+Every substantive sentence carries a citation, and the grounding gate checks it:
+the numbers in a claim must appear in the passage it cites, and a citation that
+names the wrong passage is re-pointed at the one that actually supports the
+claim rather than accepted. What cannot be supported is stripped; if most of an
+answer is stripped, the whole answer is refused rather than shipped thin.
 
 - **Router** — a keyword heuristic selects the small or large model. It used to spend an
   LLM call on this; measurement showed that call had never actually worked, and that
@@ -44,6 +56,8 @@ Sentinel wraps the pipeline in a LangGraph agent that grades its own output and 
 - **Critic** — evaluates the answer against retrieved context. Faithfulness and relevance scored.
 - **Repair loop** — on low confidence, rewrites the query and re-retrieves. Bounded to prevent runaway loops.
 - **Guardrails** — input and output. Blocks prompt-injection patterns, PII leakage, off-topic drift.
+- **Grounding gate** — deterministic, after the critic. Cannot hallucinate, because it contains no model: it checks numbers and vocabulary against the cited passage, repairs misattributed citations, and strips what nothing supports.
+- **Knowledge-gap report** — every question the documents could not answer is recorded, diagnosed and clustered into a ranked work list for whoever owns the documents. A refusal is a fact about the corpus, and it should reach the person who can fix it.
 - **Full request tracing** — every node emits structured logs; traces stored in DynamoDB for replay and debugging.
 
 The point isn't the framework choices. The point is the platform grades itself, catches its own failures, and only ships answers it can defend.
@@ -54,13 +68,14 @@ The point isn't the framework choices. The point is the platform grades itself, 
 
 - [x] Ingestion pipeline and hybrid index (`make ingest`)
 - [x] LangGraph agent: router → retriever → synthesiser → critic → grounding → repair → refusal
-- [x] FastAPI service, guardrail chain, 122-test suite (unit + HTTP contract + adversarial + end-to-end)
+- [x] FastAPI service, guardrail chain, 200-test suite (unit + HTTP contract + adversarial + concurrency + end-to-end)
 - [x] Document registry with explicit lifecycle, ownership and tenant isolation
 - [x] Page-aware PDF pipeline with typed failure modes (encrypted / scanned / corrupt)
-- [x] Atomic, versioned index publication (safe under concurrent uploads *within one process* — see limitations)
-- [ ] AWS deploy: Lambda container, DynamoDB, S3, CloudFront (`infra/deploy.sh`) — **written and reviewed, not yet executed**
-- [x] Evaluation harness (faithfulness / retrieval-hit / refusal-rate), GitHub Actions CI
-- [x] TypeScript frontend
+- [x] Atomic, versioned index publication, serialized across processes by a DynamoDB lease lock
+- [x] AWS deploy: Lambda container, DynamoDB, S3, CloudFront, SSM SecureString — **executed and serving**
+- [x] Evaluation harness (faithfulness / completeness / retrieval-hit / refusal-rate), GitHub Actions CI
+- [x] TypeScript frontend, light/dark, markdown answers, click-through citations
+- [x] Knowledge-gap report: failures recorded, diagnosed, clustered, and surfaced to document owners
 
 ### Known limitations
 
@@ -73,11 +88,18 @@ These are deliberate scope boundaries, not oversights:
 - **Ingestion is synchronous.** Fine for the 1 MB / 200-page limit this targets. A
   durable queue (S3 event → SQS → worker) is the right shape beyond that; the
   previous in-process daemon thread was removed because Lambda freezes on return.
-- **Index publication is single-writer, and that writer is process-local.** Concurrent
-  uploads within one process are serialized and retried correctly. Across *multiple*
-  Lambda instances the lock and the pointer compare-and-set do not see each other, so
-  two simultaneous writers can lose a document. This is the one open **correctness**
-  issue in the system; it needs a DynamoDB conditional-write lock.
+- **Follow-up questions are not resolved before retrieval.** "What about contractors?"
+  is embedded literally. The synthesiser sees the conversation and often recovers, but
+  retrieval searched for the wrong thing, so on a follow-up the evidence may simply not
+  be there.
+- **Whole-document questions are served by top-k similarity.** "List every exception"
+  needs coverage; top-k returns the *most similar* k passages, which is a different
+  thing. The answer looks complete either way, and nothing detects the difference yet.
+- **Supersession is not modelled.** Two documents stating different refund windows are
+  two pieces of evidence. Nothing marks one as current, and upload order is not
+  authority.
+- **One identity per API key.** There is a tenant, but no concept of a *person*, so
+  there are no roles, no per-user document permissions and no audit of who asked what.
 - **The browser holds an API key.** `VITE_API_KEY` is baked into the bundle and is
   extractable by anyone who loads the page. Acceptable for local development and a
   quota-limited demo; not acceptable as production authentication.
@@ -97,24 +119,28 @@ These are deliberate scope boundaries, not oversights:
 | Small/large split            | `gpt-oss-20b` (synthesis, critic) + `120b` (escalation) | Most cost lives on the small model; escalate only when repair needs it |
 | Query routing                | Keyword heuristic, no LLM call                        | Measured: the LLM classifier added latency and tokens, and cost a false refusal (ADR 0002) |
 | Refusal handling             | Short-circuited before the critic                     | Measured: repairing refusals *was* the p95 — 25.3s → 12.1s (ADR 0001) |
+| Refusal text                 | Generated from a reason code, never from model output | The rejected draft is exactly what we decided not to stand behind (ADR 0005) |
+| Concurrent publication       | DynamoDB lease lock in the existing documents table    | Conditional write is atomic at the database; no new resource, no IAM change |
+| Learning from failures       | Deterministic diagnosis, clustered on term overlap     | Costs no provider call, so a burst of hard questions cannot break diagnosis too (ADR 0007) |
 | Serving                      | AWS Lambda container image behind API Gateway         | Cold start acceptable for demo; scales to zero; free tier              |
 | State                        | DynamoDB (traces, API keys)                           | Serverless, single-digit-ms reads, no schema migrations                |
 | Auth                         | API Gateway usage plans + hashed keys in DynamoDB     | Two layers of protection, no Cognito overhead                          |
 | Frontend                     | React + TypeScript on CloudFront                      | Static hosting, cheap, edge-cached                                     |
-| Tests                        | pytest, GitHub Actions on push                        | Ingestion, retrieval, agent nodes, guardrails, end-to-end              |
+| Tests                        | pytest on every PR; evals nightly or on a `run-evals` label | Unit CI is fast and always on; the eval suite paces itself around a rate limit, so it is opt-in |
 
 ---
 
 ## Repo layout
 
 ```
-backend/            FastAPI service, LangGraph nodes, guardrails, retrieval
+backend/            FastAPI service, LangGraph nodes, guardrails, retrieval, casebook
 frontend/           React + TypeScript chat UI
-infra/              IaC: Lambda, API Gateway, DynamoDB, S3, CloudFront
+infra/              IaC: Lambda, Function URL, DynamoDB, S3, CloudFront
 evals/              Evaluation harness, golden dataset, report generator
 docker/             Lambda container image
-docs/               Sample documents for the demo corpus
-.github/workflows/  CI — lint, test, eval on push
+corpus/             The demo business documents — the ONLY thing that gets indexed
+docs/               Engineering documentation and ADRs (deliberately NOT corpus)
+.github/workflows/  ci.yml (every PR) and evals.yml (nightly, or per-PR via label)
 ```
 
 ---
@@ -128,7 +154,7 @@ uv venv C:/venvs/sentinel --python 3.12
 uv pip install -e ".[dev]" --python C:/venvs/sentinel/Scripts/python.exe
 
 cp .env.example .env                   # fill GROQ_API_KEY
-make ingest                            # build index/ from ./docs, runs smoke test
+make ingest                            # build index/ from ./corpus, runs smoke test
 make test                              # full pytest suite
 make eval                              # run evaluation harness → evals/report.md
 make serve                             # local FastAPI on :8000

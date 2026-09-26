@@ -19,9 +19,11 @@ install: venv
 	$(PY) -m pip install --upgrade pip
 	$(PY) -m pip install -e ".[dev]"
 
-# Build FAISS + BM25 + chunks.jsonl from ./docs into ./index
+# Build FAISS + BM25 + chunks.jsonl from ./corpus into ./index.
+# ./corpus, not ./docs: the ingester takes every .md under the folder, so
+# pointing it at ./docs indexed this repo's own engineering documentation.
 ingest:
-	$(PY) -m ingestion.ingest ./docs
+	$(PY) -m ingestion.ingest ./corpus
 
 # Retrieval-only smoke test against the built index
 smoke:

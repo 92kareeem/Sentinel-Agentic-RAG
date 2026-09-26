@@ -10,9 +10,8 @@ import re
 import time
 from collections.abc import Iterable
 
-from app.agents.budget import check_budget
+from app.agents.budget import check_budget, llm_call
 from app.agents.state import AgentState
-from app.llm import groq_client
 from app.models.schemas import Chunk, Citation
 
 _SYSTEM_PROMPT = (
@@ -120,7 +119,8 @@ def synthesizer_node(state: AgentState) -> AgentState:
         return state
 
     t0 = time.perf_counter()
-    content, tokens_in, tokens_out = groq_client.chat_completion(
+    out = llm_call(
+        state,
         model=state["model"],
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
@@ -128,6 +128,9 @@ def synthesizer_node(state: AgentState) -> AgentState:
         ],
         max_tokens=900,
     )
+    if out is None:  # deadline ran out mid-call; llm_call already refused
+        return state
+    content, tokens_in, tokens_out = out
     state["answer"] = content.strip()
     state["citations"] = _extract_citations(state["answer"], state["retrieved"])
     state["token_budget_left"] -= tokens_in + tokens_out

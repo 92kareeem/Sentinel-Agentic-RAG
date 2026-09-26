@@ -8,6 +8,7 @@ Exit code 1 if gates fail (mean faithfulness < 0.75 or unanswerable-refusal
 """
 
 import json
+import os
 import re
 import statistics
 import sys
@@ -16,11 +17,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
+# Set BEFORE app.config is imported: Settings is lru_cached, so a later change
+# would not be seen.
+#
+# The harness is a batch job on a free tier whose token bucket refills over a
+# minute. The interactive default (3 attempts) is tuned for a person waiting
+# and is not enough time for that bucket to refill, so a suite that is merely
+# SLOW reads as a suite that is BROKEN — measured: 14 of 17 answerable
+# questions "refused" in under 120 ms each. Waiting is the correct response to
+# a rate limit when nobody is waiting on you.
+os.environ.setdefault("LLM_MAX_RETRIES", "8")
+
 from app.agents.graph import build_graph  # noqa: E402
 from app.agents.state import AgentState  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.llm import groq_client  # noqa: E402
-from app.models.schemas import is_insufficient_context  # noqa: E402
+from app.models.schemas import RefusalReason, is_insufficient_context  # noqa: E402
 from app.observability.tracing import TraceRecorder  # noqa: E402
 from judge_prompts import (  # noqa: E402
     COMPLETENESS_PROMPT,
@@ -30,6 +42,50 @@ from judge_prompts import (  # noqa: E402
 
 GATE_FAITHFULNESS = 0.75
 GATE_REFUSAL = 2 / 3
+
+# The harness is a batch job. Nobody is waiting on any single answer, so it
+# does NOT inherit settings.deadline_seconds, which exists to stop a person
+# staring at a spinner. Applying an interactive deadline here makes the eval
+# report a provider rate limit as a quality regression — the one thing a gate
+# must never do.
+EVAL_DEADLINE_SECONDS = 600
+
+# Groq's free tier allows 8,000 tokens per minute, refilled continuously.
+#
+# The harness used to fire the whole suite flat out — ~30,000 tokens inside a
+# minute — and then score the resulting 429s as bad answers: 14 of 17
+# answerable questions "refused" in under 120 ms each, at a mean of 339
+# tokens/query against a normal 1,482.
+#
+# Pacing is derived from what each question ACTUALLY cost rather than from a
+# guessed constant, because the cost varies by a factor of two: a question
+# that escalates to the larger model runs synthesis twice. A fixed 12s sleep
+# was tuned against the cheap case and still hit the limit on the expensive
+# one. Spend N tokens, then wait for the bucket to refill N tokens.
+#
+# The 0.8 factor leaves headroom for the request this process is not the only
+# one making — a developer's laptop and CI can share an account.
+TOKENS_PER_MINUTE = 8_000
+PACING_SAFETY = 0.8
+_TOKENS_PER_SECOND = (TOKENS_PER_MINUTE * PACING_SAFETY) / 60
+
+# Set to 0 on a paid tier or against a local model, where none of this applies.
+EVAL_PACING = os.environ.get("EVAL_PACING", "1") != "0"
+
+
+def _pace_for(tokens_spent: int) -> float:
+    """Seconds to wait for the token bucket to refill what we just spent."""
+    if not EVAL_PACING or tokens_spent <= 0:
+        return 0.0
+    return tokens_spent / _TOKENS_PER_SECOND
+
+
+# Grading runs through groq_client too, and its tokens come out of the same
+# bucket — roughly half of each question's real cost. They are tracked
+# separately from the trace so the report's "tokens/query" keeps meaning what
+# it says (what the SYSTEM spent answering), while pacing can account for what
+# the whole harness spent.
+_judge_tokens = 0
 
 # Chunk ids gained a page segment ("doc_p2_s1_c0") when PDF extraction became
 # page-aware. The golden dataset records which SECTION should be retrieved, not
@@ -44,7 +100,8 @@ def _normalize_chunk_id(chunk_id: str) -> str:
 
 
 def _judge(system_prompt: str, user_content: str, key: str) -> float:
-    content, _, _ = groq_client.chat_completion(
+    global _judge_tokens
+    content, tokens_in, tokens_out = groq_client.chat_completion(
         model=JUDGE_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
@@ -52,7 +109,15 @@ def _judge(system_prompt: str, user_content: str, key: str) -> float:
         ],
         max_tokens=300,  # headroom for gpt-oss's hidden reasoning tokens, see groq_client.py
         json_mode=True,
+        # Grading is the tail of a burst — the answer it grades has just spent
+        # the token bucket — so it is the call most likely to meet a 429, and
+        # the default three attempts with 1+2+4s of backoff is not enough time
+        # for a per-minute bucket to refill. Nobody is waiting on a batch job,
+        # so wait properly. The deadline keeps "wait" bounded.
+        max_retries=8,
+        deadline_ts=time.monotonic() + EVAL_DEADLINE_SECONDS,
     )
+    _judge_tokens += tokens_in + tokens_out
     return float(json.loads(content)[key])
 
 
@@ -85,6 +150,8 @@ def judge_completeness(question: str, reference: str, candidate: str) -> float:
 
 
 def run_item(graph, item: dict) -> dict:
+    global _judge_tokens
+    _judge_tokens = 0
     settings = get_settings()
     trace = TraceRecorder(query_redacted=item["question"])
     state: AgentState = {
@@ -92,7 +159,8 @@ def run_item(graph, item: dict) -> dict:
         "user_id": "eval", "doc_id": None, "trace": trace, "attempt": 0,
         "model": settings.groq_model_simple,
         "token_budget_left": settings.token_budget,
-        "deadline_ts": time.monotonic() + settings.deadline_seconds,
+        # Batch deadline, not the interactive one — see EVAL_DEADLINE_SECONDS.
+        "deadline_ts": time.monotonic() + EVAL_DEADLINE_SECONDS,
         "retrieved": [], "answer": "", "citations": [], "critic": None,
         "status": "running", "refusal_reason": None, "conversation_history": [],
     }
@@ -110,8 +178,26 @@ def run_item(graph, item: dict) -> dict:
             "refused": False, "hit": None, "faithfulness": 0.0, "completeness": 0.0,
             "latency_ms": int((time.perf_counter() - t0) * 1000),
             "tokens": trace.total_tokens(), "repairs": trace.repair_count, "answer": "",
+            "judge_tokens": _judge_tokens,
         }
     latency_ms = int((time.perf_counter() - t0) * 1000)
+
+    if result.get("refusal_reason") == RefusalReason.BUDGET_EXHAUSTED:
+        # The graph ran out of wall clock or tokens. That is a statement about
+        # the provider and the budget, NOT about whether the documents answer
+        # the question — and scoring it as a false refusal is exactly the
+        # "quality regression that did not happen" this file already refuses
+        # to report for exceptions. The same reasoning has to cover refusals,
+        # because the deadline now surfaces as a clean BUDGET_EXHAUSTED rather
+        # than as a raised error.
+        return {
+            "id": item["id"], "category": item["category"],
+            "error": "BUDGET_EXHAUSTED — provider rate limit or deadline, not a quality signal",
+            "refused": False, "hit": None, "faithfulness": 0.0, "completeness": 0.0,
+            "latency_ms": latency_ms, "tokens": trace.total_tokens(),
+            "repairs": trace.repair_count, "answer": "",
+            "judge_tokens": _judge_tokens,
+        }
 
     # Same helper the API uses, so the harness and production agree on what
     # counts as a refusal. A strict `== "INSUFFICIENT_CONTEXT"` here would miss
@@ -130,17 +216,32 @@ def run_item(graph, item: dict) -> dict:
         faith = 0.3
         completeness = 0.0  # a false refusal answers nothing
     else:
-        faith = judge_faithfulness(item["question"], context, result["answer"])
-        completeness = judge_completeness(
-            item["question"], item["reference_answer"], result["answer"]
-        )
+        try:
+            faith = judge_faithfulness(item["question"], context, result["answer"])
+            completeness = judge_completeness(
+                item["question"], item["reference_answer"], result["answer"]
+            )
+        except Exception as exc:  # noqa: BLE001 — reported as "unmeasured"
+            # The ANSWER succeeded; only the grading of it failed. That costs
+            # one unmeasured question, never the run: an unhandled judge error
+            # used to abort main() entirely, so a single 429 at the wrong
+            # moment threw away nineteen perfectly good results and reported
+            # nothing at all.
+            return {
+                "id": item["id"], "category": item["category"],
+                "error": f"judge unavailable: {type(exc).__name__}: {exc}",
+                "refused": False, "hit": hit, "faithfulness": 0.0, "completeness": 0.0,
+                "latency_ms": latency_ms, "tokens": trace.total_tokens(),
+                "repairs": trace.repair_count, "answer": result["answer"][:120],
+                "judge_tokens": _judge_tokens,
+            }
 
     return {
         "id": item["id"], "category": item["category"], "refused": refused,
         "hit": hit, "faithfulness": faith, "completeness": completeness,
         "latency_ms": latency_ms,
         "tokens": trace.total_tokens(), "repairs": trace.repair_count,
-        "answer": result["answer"][:120],
+        "answer": result["answer"][:120], "judge_tokens": _judge_tokens,
     }
 
 
@@ -150,9 +251,17 @@ def main() -> None:
     graph = build_graph()
 
     rows = []
-    for item in items:
+    for n, item in enumerate(items):
         row = run_item(graph, item)
         rows.append(row)
+        if n < len(items) - 1:
+            # Wait for the bucket to refill what this question spent, counting
+            # grading. Sleeping AFTER the item (not before the next one) means
+            # the wait is sized by real, measured cost.
+            wait = _pace_for(row["tokens"] + row.get("judge_tokens", 0))
+            if wait:
+                print(f"       ...pacing {wait:.0f}s for the token bucket")
+                time.sleep(wait)
         if row.get("error"):
             print(f"  [{row['id']:>2}] {row['category']:<12} UNMEASURED — {row['error'][:80]}")
         else:

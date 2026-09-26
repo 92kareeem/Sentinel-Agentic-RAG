@@ -2,7 +2,13 @@
 // the key here is the DEMO key only (quota-limited server-side, rotatable).
 // The admin key must never appear in this codebase.
 
-import type { ConversationTurn, DocumentSummary, QueryResult, TraceRecord } from "./types";
+import type {
+  ConversationTurn,
+  DocumentSummary,
+  KnowledgeGapReport,
+  QueryResult,
+  TraceRecord,
+} from "./types";
 
 const BASE = import.meta.env.VITE_API_BASE as string;
 const KEY = import.meta.env.VITE_API_KEY as string;
@@ -152,4 +158,10 @@ export function getDocument(documentId: string): Promise<DocumentSummary> {
 
 export function deleteDocument(documentId: string): Promise<DocumentSummary> {
   return request<DocumentSummary>(`/v1/documents/${documentId}`, { method: "DELETE" });
+}
+
+// ---------------------------------------------------------------- insights
+
+export function getKnowledgeGaps(windowDays = 30): Promise<KnowledgeGapReport> {
+  return request<KnowledgeGapReport>(`/v1/insights/knowledge-gaps?window_days=${windowDays}`);
 }
