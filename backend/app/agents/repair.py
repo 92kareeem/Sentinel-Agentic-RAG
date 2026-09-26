@@ -31,18 +31,26 @@ def repair_rewrite_node(state: AgentState) -> AgentState:
         model=settings.groq_model_simple,
         messages=[
             {"role": "system", "content": _REWRITE_PROMPT},
+            # Always the user's original wording — rewriting a rewrite
+            # compounds drift away from what was actually asked.
             {"role": "user", "content": state["query"]},
         ],
         max_tokens=100,
     )
-    state["query"] = content.strip() or state["query"]
+    # Writes search_query, never query. Overwriting the user's question here
+    # made every downstream node answer and grade the reformulation instead:
+    # the rewrite is tuned for keyword recall ("annual subscription refund
+    # window"), so nuance the user cared about ("...if onboarding has already
+    # started") was dropped from the question being answered, not just from
+    # the one being searched.
+    state["search_query"] = content.strip() or state["search_query"]
     state["attempt"] += 1
     state["token_budget_left"] -= tokens_in + tokens_out
 
     duration_ms = int((time.perf_counter() - t0) * 1000)
     state["trace"].repair_count += 1
     state["trace"].record_step(
-        "repair_rewrite", duration_ms, tokens_in, tokens_out, new_query=state["query"]
+        "repair_rewrite", duration_ms, tokens_in, tokens_out, new_query=state["search_query"]
     )
     return state
 

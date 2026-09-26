@@ -9,6 +9,7 @@ from app.observability.tracing import TraceRecorder
 def test_synthesizer_includes_previous_conv_history_in_prompt() -> None:
     state: AgentState = {
         "query": "What about the refund window?",
+        "search_query": "What about the refund window?",
         "user_id": "u1",
         "doc_id": None,
         "trace": TraceRecorder(),
@@ -45,6 +46,7 @@ def test_synthesizer_includes_previous_conv_history_in_prompt() -> None:
 def _state_with_history(history: list[dict]) -> AgentState:
     return {
         "query": "q",
+        "search_query": "q",
         "user_id": "u1",
         "doc_id": None,
         "trace": TraceRecorder(),

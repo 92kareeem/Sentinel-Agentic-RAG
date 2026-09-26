@@ -79,6 +79,7 @@ def test_injected_document_text_is_framed_as_data_not_instructions() -> None:
     )
     state = {
         "query": "summarize this document",
+        "search_query": "summarize this document",
         "user_id": "u",
         "doc_id": None,
         "trace": TraceRecorder(),
@@ -113,6 +114,7 @@ def test_injection_via_conversation_history_is_bounded_and_labelled() -> None:
 
     state = {
         "query": "hi",
+        "search_query": "hi",
         "user_id": "u",
         "doc_id": None,
         "trace": TraceRecorder(),

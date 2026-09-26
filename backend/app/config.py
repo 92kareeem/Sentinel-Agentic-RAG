@@ -81,6 +81,18 @@ class Settings(BaseSettings):
     # treated as abandoned. Comfortably beyond the 900s presigned-URL expiry,
     # so a slow-but-real upload is never mistaken for a dead one.
     upload_abandon_seconds: int = 1800
+    # How often a warm process re-checks whether a NEWER index version has been
+    # published elsewhere. Without this, an upload served by one Lambda
+    # instance is invisible to every other warm instance until it cold-starts:
+    # the user uploads a document, the next query lands somewhere else, the
+    # document looks missing, and they upload it again.
+    #
+    # The check is one small pointer read, taken at most once per window and
+    # only when a query actually arrives — never a background poller, which
+    # would bill for staying awake with nobody asking anything. At 60s an idle
+    # demo makes no requests at all, and a busy hour makes 60.
+    # 0 disables the check (tests, and single-process local runs).
+    index_refresh_seconds: int = 60
     # True on laptops: auth/quota/traces use in-memory fixtures instead of DynamoDB
     local_mode: bool = True
 

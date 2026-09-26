@@ -26,6 +26,7 @@ from app.observability.tracing import TraceRecorder
 def _state(**over: Any) -> Any:
     base: dict[str, Any] = {
         "query": "q",
+        "search_query": "q",
         "user_id": "u",
         "doc_id": None,
         "trace": TraceRecorder(),

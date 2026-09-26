@@ -112,6 +112,36 @@ def read_pointer(root: Path | None = None) -> str | None:
         return None
 
 
+def read_published_version() -> str | None:
+    """The published version according to the authoritative pointer — one small
+    read, no artifacts downloaded.
+
+    Exists so a warm reader can ask "has anything been published since I
+    loaded?" without paying to fetch an index it may not need. In AWS mode
+    that is a single GetObject on a ~30-byte key; the alternative, calling
+    load_current_from_s3(), downloads the whole index just to learn its name.
+
+    Returns None when nothing is published, and also when the check itself
+    fails: a reader that cannot reach the pointer should keep serving the
+    index it already has rather than fail the query. Staleness is recoverable;
+    a 503 on every request because S3 blipped is not.
+    """
+    settings = get_settings()
+    if not settings.use_s3_index:
+        return read_pointer()
+    try:
+        import boto3
+
+        s3 = boto3.client("s3", region_name=settings.aws_region)
+        body = s3.get_object(
+            Bucket=settings.s3_bucket_docs, Key=f"index/{POINTER_FILE}"
+        )["Body"].read()
+        version: str = json.loads(body.decode())["version"]
+        return version
+    except Exception:  # noqa: BLE001 — see docstring: never fail a read on this
+        return None
+
+
 def _write_pointer(root: Path, version: str, *, expected: str | None) -> None:
     """Compare-and-set the current-version pointer.
 

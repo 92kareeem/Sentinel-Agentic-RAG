@@ -5,7 +5,7 @@ it a flat TypedDict (not nested Pydantic) is a LangGraph requirement — the
 graph diffs/merges state between node invocations.
 """
 
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 from app.models.schemas import Chunk, Citation, CriticScores, RefusalReason
 
@@ -19,7 +19,21 @@ from app.observability.tracing import TraceRecorder
 
 
 class AgentState(TypedDict):
+    # What the user actually asked. Set once and never reassigned — the answer
+    # the user reads must address THIS, whatever retrieval did along the way.
     query: str
+    # What retrieval is currently searching with. Starts equal to `query` and
+    # is replaced by repair_rewrite with a keyword-dense reformulation.
+    #
+    # These used to be one field. repair_rewrite overwrote it, so after a
+    # rewrite the synthesizer answered the reformulation and the critic scored
+    # relevance against it too — the whole pipeline agreed on an answer to a
+    # question nobody asked. For "can we refund after 20 days if onboarding
+    # started?", a rewrite to "annual subscription refund window" produces a
+    # confident, correctly-cited answer that silently drops the onboarding
+    # exception: the worst failure shape for this product, because nothing
+    # about it looks wrong.
+    search_query: str
     user_id: str
     doc_id: str | None  # scope retrieval to one uploaded document; None = whole index
     trace: TraceRecorder
@@ -36,3 +50,7 @@ class AgentState(TypedDict):
     # declined. None while running or answered.
     refusal_reason: RefusalReason | None
     conversation_history: list[dict[str, str]]
+    # The draft that failed the critic or the grounding gate, kept for
+    # diagnosis only. Deliberately NOT part of any API response: it is exactly
+    # the text the system just decided it could not stand behind.
+    rejected_draft: NotRequired[str]
