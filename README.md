@@ -68,7 +68,7 @@ The point isn't the framework choices. The point is the platform grades itself, 
 
 - [x] Ingestion pipeline and hybrid index (`make ingest`)
 - [x] LangGraph agent: router → retriever → synthesiser → critic → grounding → repair → refusal
-- [x] FastAPI service, guardrail chain, 200-test suite (unit + HTTP contract + adversarial + concurrency + end-to-end)
+- [x] FastAPI service, guardrail chain, 250+ backend tests (unit + HTTP contract + adversarial + concurrency + end-to-end)
 - [x] Document registry with explicit lifecycle, ownership and tenant isolation
 - [x] Page-aware PDF pipeline with typed failure modes (encrypted / scanned / corrupt)
 - [x] Atomic, versioned index publication, serialized across processes by a DynamoDB lease lock
@@ -76,6 +76,8 @@ The point isn't the framework choices. The point is the platform grades itself, 
 - [x] Evaluation harness (faithfulness / completeness / retrieval-hit / refusal-rate), GitHub Actions CI
 - [x] TypeScript frontend, light/dark, markdown answers, click-through citations
 - [x] Knowledge-gap report: failures recorded, diagnosed, clustered, and surfaced to document owners
+- [x] Reader feedback: answers can be reported wrong or incomplete, with a correction; refusals can be reported as false
+- [x] Regression ratchet: a reviewed failure becomes a per-question test that, once it passes, can never fail unnoticed (ADR 0008)
 
 ### Known limitations
 
@@ -100,6 +102,9 @@ These are deliberate scope boundaries, not oversights:
   authority.
 - **One identity per API key.** There is a tenant, but no concept of a *person*, so
   there are no roles, no per-user document permissions and no audit of who asked what.
+- **Regressions run against the eval corpus only.** A promoted case is tested in CI
+  against `./corpus`. A tenant's own documents would need a per-tenant regression run
+  against that tenant's index. Not built yet.
 - **The browser holds an API key.** `VITE_API_KEY` is baked into the bundle and is
   extractable by anyone who loads the page. Acceptable for local development and a
   quota-limited demo; not acceptable as production authentication.
@@ -122,6 +127,8 @@ These are deliberate scope boundaries, not oversights:
 | Refusal text                 | Generated from a reason code, never from model output | The rejected draft is exactly what we decided not to stand behind (ADR 0005) |
 | Concurrent publication       | DynamoDB lease lock in the existing documents table    | Conditional write is atomic at the database; no new resource, no IAM change |
 | Learning from failures       | Deterministic diagnosis, clustered on term overlap     | Costs no provider call, so a burst of hard questions cannot break diagnosis too (ADR 0007) |
+| Learning from readers        | Feedback on a trace; one verdict per reader, atomically | The failure no check can see is a confident wrong answer — only the reader can report it (ADR 0008) |
+| Not repeating mistakes       | Per-question regression suite, human-promoted, pending → enforced | An average gate lets one question fall from 1.0 to 0.0 and still pass (ADR 0008) |
 | Serving                      | AWS Lambda container image behind API Gateway         | Cold start acceptable for demo; scales to zero; free tier              |
 | State                        | DynamoDB (traces, API keys)                           | Serverless, single-digit-ms reads, no schema migrations                |
 | Auth                         | API Gateway usage plans + hashed keys in DynamoDB     | Two layers of protection, no Cognito overhead                          |
@@ -158,6 +165,12 @@ make ingest                            # build index/ from ./corpus, runs smoke 
 make test                              # full pytest suite
 make eval                              # run evaluation harness → evals/report.md
 make serve                             # local FastAPI on :8000
+
+# The learning loop: review what readers reported, turn it into regression tests
+python evals/promote.py list                        # failures not yet in the suite
+python evals/promote.py promote <case_id>           # reader's correction becomes the reference
+python evals/run.py --regressions-only              # check just the ratchet after a fix
+python evals/run.py --lock                          # lock pending regressions that now pass
 ```
 
 ---
