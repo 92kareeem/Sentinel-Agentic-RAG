@@ -1,12 +1,26 @@
-"""Eval runner: golden dataset -> agent graph -> metrics -> evals/report.md.
+"""Eval runner: golden dataset + regression suite -> agent graph -> evals/report.md.
 
 Usage (from repo root, venv python):
-    python evals/run.py            # full run against local index + live Groq
+    python evals/run.py                     # golden set + regressions, live Groq
+    python evals/run.py --regressions-only  # just the ratchet, e.g. after a fix
+    python evals/run.py --lock              # also lock pending regressions that now pass
 
-Exit code 1 if gates fail (mean faithfulness < 0.75 or unanswerable-refusal
-< 2/3) so CI can use this directly.
+Two suites, two kinds of gate:
+
+  golden_dataset.json  AVERAGES: mean faithfulness >= 0.75, unanswerable
+                       refusal >= 2/3. "Is the system good overall?"
+  regressions.json     PER QUESTION: every enforced regression must pass.
+                       "Did a mistake we already fixed come back?"
+
+An average cannot answer the second question — one item can fall from 1.0
+to 0.0 and move a 20-item mean by only 0.05 — which is why the ratchet is a
+separate suite rather than more golden rows. See app/learning/ratchet.py.
+
+Exit codes: 0 pass · 1 a gate failed · 2 inconclusive (upstream failures,
+not quality regressions — re-run).
 """
 
+import argparse
 import json
 import os
 import re
@@ -31,6 +45,7 @@ os.environ.setdefault("LLM_MAX_RETRIES", "8")
 from app.agents.graph import build_graph  # noqa: E402
 from app.agents.state import AgentState  # noqa: E402
 from app.config import get_settings  # noqa: E402
+from app.learning import ratchet  # noqa: E402
 from app.llm import groq_client  # noqa: E402
 from app.models.schemas import RefusalReason, is_insufficient_context  # noqa: E402
 from app.observability.tracing import TraceRecorder  # noqa: E402
@@ -245,34 +260,122 @@ def run_item(graph, item: dict) -> dict:
     }
 
 
+def _as_eval_item(reg: ratchet.RegressionItem) -> dict:
+    """A regression in the shape run_item() takes. `refuse` reuses the
+    unanswerable path (refusing IS the pass); `answer` is judged against the
+    promoted reference, which is where a reader's reviewed correction lands."""
+    return {
+        "id": reg.id,
+        "category": "unanswerable" if reg.expect == "refuse" else "regression",
+        "question": reg.question,
+        "expected_chunk_ids": [],
+        "reference_answer": reg.reference_answer or "",
+    }
+
+
+def _print_row(row: dict) -> None:
+    if row.get("error"):
+        print(f"  [{row['id']:>4}] {row['category']:<12} UNMEASURED — {row['error'][:80]}")
+    else:
+        print(f"  [{row['id']:>4}] {row['category']:<12} faith={row['faithfulness']:.2f} "
+              f"compl={row['completeness']:.2f} hit={row['hit']} "
+              f"refused={row['refused']} {row['latency_ms']}ms")
+
+
+_prev_cost = 0  # tokens the previous run spent, answering and grading
+
+
+def _run(graph, item: dict) -> dict:
+    """run_item(), paced by what the PREVIOUS run actually cost.
+
+    Waiting before a run rather than after one means the first run never
+    waits and the last never leaves a pointless trailing sleep, however the
+    runs are sequenced — golden, then regressions, then any confirmation
+    re-runs. The wait is sized by measured cost, not a guess: a question that
+    escalates spends about twice what a simple one does.
+    """
+    global _prev_cost
+    wait = _pace_for(_prev_cost)
+    if wait:
+        print(f"       ...pacing {wait:.0f}s for the token bucket")
+        time.sleep(wait)
+    row = run_item(graph, item)
+    _prev_cost = row["tokens"] + row.get("judge_tokens", 0)
+    _print_row(row)
+    return row
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Sentinel eval runner")
+    parser.add_argument(
+        "--regressions-only", action="store_true",
+        help="run only the regression suite (skips the golden-set averages)",
+    )
+    parser.add_argument(
+        "--lock", action="store_true",
+        help="lock pending regressions that pass in this run (writes regressions.json)",
+    )
+    parser.add_argument(
+        "--suite", type=Path, default=None,
+        help="regression suite file (default: evals/regressions.json)",
+    )
+    parser.add_argument(
+        "--report", type=Path, default=None,
+        help="where to write the report (default: evals/report.md for a full run; "
+             "--regressions-only prints instead of writing unless this is given)",
+    )
+    args = parser.parse_args()
+
     root = Path(__file__).resolve().parent
-    items = json.loads((root / "golden_dataset.json").read_text(encoding="utf-8"))
+    suite_path = args.suite or root / "regressions.json"
+    suite = ratchet.load(suite_path)
+    # A hand-edited suite that breaks an invariant (a deleted regression, an
+    # answer test with no reference) fails here, before spending any quota.
+    problems = ratchet.validate(suite)
+    if problems:
+        print("regressions.json is invalid:\n  " + "\n  ".join(problems), file=sys.stderr)
+        sys.exit(1)
+
+    items = (
+        [] if args.regressions_only
+        else json.loads((root / "golden_dataset.json").read_text(encoding="utf-8"))
+    )
     graph = build_graph()
 
     rows = []
-    for n, item in enumerate(items):
-        row = run_item(graph, item)
-        rows.append(row)
-        if n < len(items) - 1:
-            # Wait for the bucket to refill what this question spent, counting
-            # grading. Sleeping AFTER the item (not before the next one) means
-            # the wait is sized by real, measured cost.
-            wait = _pace_for(row["tokens"] + row.get("judge_tokens", 0))
-            if wait:
-                print(f"       ...pacing {wait:.0f}s for the token bucket")
-                time.sleep(wait)
-        if row.get("error"):
-            print(f"  [{row['id']:>2}] {row['category']:<12} UNMEASURED — {row['error'][:80]}")
-        else:
-            print(f"  [{row['id']:>2}] {row['category']:<12} faith={row['faithfulness']:.2f} "
-                  f"compl={row['completeness']:.2f} hit={row['hit']} "
-                  f"refused={row['refused']} {row['latency_ms']}ms")
+    for item in items:
+        rows.append(_run(graph, item))
+
+    # --- the ratchet
+    if suite.active:
+        print(f"\n  regression suite: {len(suite.active)} active "
+              f"({sum(i.status == 'enforced' for i in suite.active)} enforced)")
+    outcomes: list[ratchet.Outcome] = []
+    reg_rows: list[dict] = []
+    for reg in suite.active:
+        row = _run(graph, _as_eval_item(reg))
+        outcome = ratchet.evaluate(reg, row)
+        if outcome.status == "enforced" and outcome.passed is False:
+            # Confirm before failing the build. One judge call is noisy, and a
+            # ratchet that goes red on noise gets switched off — which would
+            # undo everything it exists to protect. A real regression fails
+            # twice; a wobble usually does not.
+            print(f"         {reg.id} failed ({outcome.reason}); confirming with one re-run")
+            row = _run(graph, _as_eval_item(reg))
+            retry = ratchet.evaluate(reg, row)
+            if retry.passed is not False:
+                outcome = retry.model_copy(
+                    update={"reason": f"passed on re-run (first run: {outcome.reason})"}
+                )
+            else:
+                outcome = retry.model_copy(update={"reason": f"{retry.reason} (confirmed)"})
+        outcomes.append(outcome)
+        reg_rows.append(row)
 
     # Items that never produced an answer are excluded from every quality
     # metric. Averaging a 0.0 from a rate-limited request into faithfulness
     # would report a quality regression that did not happen.
-    unmeasured = [r for r in rows if r.get("error")]
+    unmeasured = [r for r in rows + reg_rows if r.get("error")]
     if unmeasured:
         print(f"\n!! {len(unmeasured)}/{len(rows)} questions could not be measured:")
         for r in unmeasured:
@@ -284,6 +387,31 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(2)  # distinct from 1 (a real gate failure)
+
+    blocking = ratchet.blocking_failures(outcomes)
+    lockable = ratchet.ready_to_lock(outcomes)
+    regression_report = _regression_section(suite, outcomes)
+
+    if args.lock and lockable:
+        for o in lockable:
+            ratchet.lock(suite, o.id)
+        ratchet.save(suite, suite_path)
+        print(f"\nlocked: {', '.join(o.id for o in lockable)} — commit evals/regressions.json")
+        lockable = []
+
+    if not rows:  # --regressions-only
+        # Never onto evals/report.md by default. That file is the committed
+        # record of the last FULL run; a partial run written over it would
+        # erase the golden-set numbers while you were only re-checking one
+        # fix — found by doing exactly that during end-to-end testing.
+        text = "# Sentinel — Regression Report\n\n" + "\n".join(regression_report)
+        if args.report:
+            args.report.write_text(text, encoding="utf-8")
+            print(f"\nreport written: {args.report}")
+        else:
+            print("\n" + text)
+        _finish(blocking, lockable, aggregate_ok=True)
+        return
 
     answerable = [r for r in rows if r["category"] != "unanswerable"]
     unanswerable = [r for r in rows if r["category"] == "unanswerable"]
@@ -327,12 +455,58 @@ def main() -> None:
         f"| {r['refused']} | {r['repairs']} | {r['latency_ms']} |"
         for r in rows
     ]
-    (root / "report.md").write_text("\n".join(report), encoding="utf-8")
-    print(f"\nreport written: {root / 'report.md'}")
+    report += ["", *regression_report]
+    report_path = args.report or root / "report.md"
+    report_path.write_text("\n".join(report), encoding="utf-8")
+    print(f"\nreport written: {report_path}")
     print(f"mean_faithfulness={mean_faith:.3f}  mean_completeness={mean_completeness:.3f}  "
           f"hit_rate={hit_rate:.0%}  unanswerable_refusal={refusal_rate:.0%}")
 
-    if mean_faith < GATE_FAITHFULNESS or refusal_rate < GATE_REFUSAL:
+    _finish(
+        blocking, lockable,
+        aggregate_ok=mean_faith >= GATE_FAITHFULNESS and refusal_rate >= GATE_REFUSAL,
+    )
+
+
+def _regression_section(
+    suite: ratchet.RegressionSuite, outcomes: list[ratchet.Outcome]
+) -> list[str]:
+    enforced = sum(i.status == "enforced" for i in suite.active)
+    lines = [
+        "## Regression suite",
+        "",
+        f"{enforced} enforced · {len(suite.active) - enforced} pending · "
+        f"{len(suite.retired)} retired. Every enforced item must pass on its own; "
+        "pending items are known failures, tracked but not blocking.",
+    ]
+    if not outcomes:
+        return [*lines, "", "_No active regressions yet._"]
+    by_id = {i.id: i for i in suite.active}
+    lines += ["", "| ID | Status | Result | Why | From |", "|---|---|---|---|---|"]
+    for o in outcomes:
+        item = by_id[o.id]
+        result = {True: "pass", False: "**FAIL**", None: "unmeasured"}[o.passed]
+        lines.append(
+            f"| {o.id} | {o.status} | {result} | {o.reason} "
+            f"| {item.source.diagnosis.value}, asked {item.source.reported_at[:10]} |"
+        )
+    return lines
+
+
+def _finish(
+    blocking: list[ratchet.Outcome], lockable: list[ratchet.Outcome], *, aggregate_ok: bool
+) -> None:
+    if lockable:
+        print(
+            f"\n{len(lockable)} pending regression(s) now pass: "
+            f"{', '.join(o.id for o in lockable)}. Lock them so they can never fail "
+            "unnoticed again:  python evals/run.py --lock   (or promote.py lock <id>)"
+        )
+    if blocking:
+        print("\nREGRESSIONS — mistakes that were fixed have come back:", file=sys.stderr)
+        for o in blocking:
+            print(f"   {o.id}: {o.reason}", file=sys.stderr)
+    if not aggregate_ok or blocking:
         print("EVAL GATES FAILED", file=sys.stderr)
         sys.exit(1)
     print("EVAL GATES PASSED")

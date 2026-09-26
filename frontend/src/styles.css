@@ -639,7 +639,7 @@ button {
 
 .kpis {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 0.7rem;
   margin-bottom: 1.1rem;
 }
@@ -709,5 +709,117 @@ button {
 .insights-empty p { margin: 0; max-width: 42ch; }
 
 @media (max-width: 640px) {
+  .kpis { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 360px) {
   .kpis { grid-template-columns: 1fr; }
 }
+
+/* ------------------------------------------------------------- feedback
+
+   Deliberately quiet. It sits under every answer, so anything louder than
+   the verified badge above it would compete with the answer itself — and a
+   control that nags gets ignored. It gets louder only once someone opens it.
+*/
+
+.feedback-bar {
+  margin-top: 0.55rem;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.feedback-prompt { margin-right: 0.15rem; }
+.feedback-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+}
+.feedback-icon:hover:not(:disabled) { background: var(--panel-2); color: var(--text); border-color: var(--border); }
+.feedback-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.feedback-link:hover { color: var(--text); }
+.feedback-done { color: var(--muted); }
+
+.feedback-form {
+  margin-top: 0.75rem;
+  padding: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.feedback-choice { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.feedback-chip {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.8rem;
+}
+.feedback-chip.active { border-color: var(--accent); background: var(--accent-dim); }
+.feedback-label { font-size: 0.8rem; font-weight: 600; color: var(--text); }
+.feedback-text {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 4.2rem;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+.feedback-text:focus { outline: none; border-color: var(--accent); }
+.feedback-actions { display: flex; gap: 0.45rem; }
+.feedback-send {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 0.4rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.feedback-cancel {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.85rem;
+}
+.feedback-cancel:hover:not(:disabled) { border-color: var(--accent); }
+.feedback-send:disabled,
+.feedback-cancel:disabled,
+.feedback-chip:disabled,
+.feedback-icon:disabled { opacity: 0.55; cursor: default; }
+.feedback-error { color: var(--bad); font-size: 0.78rem; }
+
+/* Keyboard users need to see where they are; the base reset removes it. */
+.feedback-icon:focus-visible,
+.feedback-link:focus-visible,
+.feedback-chip:focus-visible,
+.feedback-send:focus-visible,
+.feedback-cancel:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

@@ -2,9 +2,12 @@
 // the key here is the DEMO key only (quota-limited server-side, rotatable).
 // The admin key must never appear in this codebase.
 
+import { feedbackBody } from "./lib/feedback";
 import type {
   ConversationTurn,
   DocumentSummary,
+  FeedbackResponse,
+  FeedbackVerdict,
   KnowledgeGapReport,
   QueryResult,
   TraceRecord,
@@ -164,4 +167,17 @@ export function deleteDocument(documentId: string): Promise<DocumentSummary> {
 
 export function getKnowledgeGaps(windowDays = 30): Promise<KnowledgeGapReport> {
   return request<KnowledgeGapReport>(`/v1/insights/knowledge-gaps?window_days=${windowDays}`);
+}
+
+// ---------------------------------------------------------------- feedback
+
+export function postFeedback(
+  traceId: string,
+  verdict: FeedbackVerdict,
+  correction?: string,
+): Promise<FeedbackResponse> {
+  return request<FeedbackResponse>("/v1/feedback", {
+    method: "POST",
+    body: JSON.stringify(feedbackBody(traceId, verdict, correction)),
+  });
 }

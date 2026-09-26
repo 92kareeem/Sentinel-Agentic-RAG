@@ -94,10 +94,13 @@ function Report({ report }: { report: KnowledgeGapReport }) {
           sub={`${report.answered} of ${report.total_questions} in the last ${report.window_days} days`}
         />
         <Kpi
-          label="Gaps to close"
+          label="Topics to fix"
           value={String(report.gaps.length)}
           tone={report.gaps.length === 0 ? "good" : "warn"}
-          sub={report.gaps.length === 1 ? "topic needs documentation" : "topics need documentation"}
+          // Not "need documentation": the list now also holds answers readers
+          // flagged as wrong, and some of those are ours to fix, not the
+          // owner's. Each row's action line says which.
+          sub={report.gaps.length === 1 ? "topic needs attention" : "topics need attention"}
         />
         <Kpi
           label="Unanswered questions"
@@ -105,12 +108,28 @@ function Report({ report }: { report: KnowledgeGapReport }) {
           tone={report.unanswered === 0 ? "good" : "warn"}
           sub="each one is someone who had to go ask a colleague"
         />
+        <Kpi
+          label="Flagged by readers"
+          value={String(report.marked_wrong)}
+          // Only "bad" when readers actually flagged something. With no
+          // ratings at all this is neutral, not good: silence isn't evidence
+          // that the answers were right.
+          tone={report.answers_rated === 0 ? "neutral" : report.marked_wrong === 0 ? "good" : "bad"}
+          sub={
+            report.answers_rated === 0
+              ? "no answers rated yet"
+              : `of ${report.answers_rated} rated answer${report.answers_rated === 1 ? "" : "s"}`
+          }
+        />
       </div>
 
       {report.gaps.length === 0 ? (
         <div className="insights-empty">
-          <div className="insights-empty-title">Nothing is missing</div>
-          <p>Every question in this period was answered from your documents.</p>
+          <div className="insights-empty-title">Nothing needs attention</div>
+          <p>
+            Every question in this period was answered from your documents, and no reader flagged an
+            answer as wrong.
+          </p>
         </div>
       ) : (
         <ol className="gap-list">
@@ -132,7 +151,7 @@ function Kpi({
   label: string;
   value: string;
   sub: string;
-  tone: "good" | "warn" | "bad";
+  tone: "good" | "warn" | "bad" | "neutral";
 }) {
   return (
     <div className={`kpi kpi-${tone}`}>

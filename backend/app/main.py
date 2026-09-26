@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from mangum import Mangum
 
 from app.api import (
+    routes_feedback,
     routes_health,
     routes_ingest,
     routes_insights,
@@ -39,6 +40,7 @@ def create_app() -> FastAPI:
     app.include_router(routes_ingest.router, prefix="/v1")
     app.include_router(routes_traces.router, prefix="/v1")
     app.include_router(routes_insights.router, prefix="/v1")
+    app.include_router(routes_feedback.router, prefix="/v1")
 
     @app.exception_handler(HTTPException)
     async def http_problem(request: Request, exc: HTTPException) -> JSONResponse:
