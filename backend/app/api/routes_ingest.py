@@ -23,7 +23,7 @@ from app.agents import retriever
 from app.config import get_settings
 from app.documents import registry
 from app.guardrails.auth import resolve_user
-from app.guardrails.quota import check_upload_quota, record_upload
+from app.guardrails.quota import check_upload_quota
 from app.models.schemas import (
     DocumentRecord,
     DocumentStatus,
@@ -245,7 +245,6 @@ def index_document(
     registry.put(record)
 
     result = _ingest_or_422(record, local)
-    record_upload(user, len(contents))
     return result
 
 
@@ -281,7 +280,6 @@ def local_upload(
     local.write_bytes(contents)
 
     result = _ingest_or_422(record, local)
-    record_upload(user, len(contents))
     return result
 
 

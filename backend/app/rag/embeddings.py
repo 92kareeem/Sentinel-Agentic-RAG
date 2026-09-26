@@ -6,21 +6,47 @@ cached in a module-level global — in Lambda, warm invocations reuse it for
 free; /healthz never pays for it.
 """
 
+import threading
 from typing import Any
 
 import numpy as np
 
 from app.config import get_settings
 
+# Guards first-use construction of every lazy singleton below.
+#
+# `if _x is None: _x = build()` is not safe when two threads arrive together:
+# both see None and both build. For the torch model that is not merely wasteful
+# — concurrent SentenceTransformer construction fails outright with
+# "NotImplementedError: Cannot copy out of meta tensor; no data!", because two
+# threads materialize the same meta-device parameters at once.
+#
+# That is reachable in normal operation, not just in tests: FastAPI runs `def`
+# endpoints in a threadpool, so two uploads arriving together in one process
+# race here on the very first request — the worst possible moment, since a cold
+# process is exactly when nothing is cached yet.
+#
+# One lock for all three singletons: initialization happens once per process,
+# so contention is irrelevant, and only one embedding backend is ever active.
+_init_lock = threading.Lock()
+
 _model: Any = None  # sentence_transformers.SentenceTransformer, loaded lazily
 
 
 def get_model() -> Any:
+    """Double-checked locking: the fast path stays lock-free once loaded.
+
+    The unlocked read is safe because assignment to a module global is atomic
+    under the GIL — a reader sees either None or a fully-constructed model,
+    never a half-built one.
+    """
     global _model
     if _model is None:
-        from sentence_transformers import SentenceTransformer  # heavy import kept lazy
+        with _init_lock:
+            if _model is None:  # re-check: another thread may have built it
+                from sentence_transformers import SentenceTransformer  # heavy, kept lazy
 
-        _model = SentenceTransformer(get_settings().embed_model_name, device="cpu")
+                _model = SentenceTransformer(get_settings().embed_model_name, device="cpu")
     return _model
 
 
@@ -30,14 +56,16 @@ _onnx: tuple[Any, Any] | None = None  # (InferenceSession, Tokenizer), lazy
 def _get_onnx() -> tuple[Any, Any]:
     global _onnx
     if _onnx is None:
-        import onnxruntime
-        from tokenizers import Tokenizer
+        with _init_lock:
+            if _onnx is None:
+                import onnxruntime
+                from tokenizers import Tokenizer
 
-        d = get_settings().onnx_model_dir
-        session = onnxruntime.InferenceSession(str(d / "model_quantized.onnx"))
-        tokenizer = Tokenizer.from_file(str(d / "tokenizer.json"))
-        tokenizer.enable_truncation(max_length=256)  # all-MiniLM-L6-v2 real max
-        _onnx = (session, tokenizer)
+                d = get_settings().onnx_model_dir
+                session = onnxruntime.InferenceSession(str(d / "model_quantized.onnx"))
+                tokenizer = Tokenizer.from_file(str(d / "tokenizer.json"))
+                tokenizer.enable_truncation(max_length=256)  # all-MiniLM-L6-v2 real max
+                _onnx = (session, tokenizer)
     return _onnx
 
 
@@ -89,13 +117,21 @@ _offsets_tok: Any = None  # tokenizers.Tokenizer for chunking (no truncation)
 def _onnx_token_offsets(text: str) -> list[tuple[int, int]]:
     global _offsets_tok
     if _offsets_tok is None:
-        from tokenizers import Tokenizer
+        with _init_lock:
+            if _offsets_tok is None:
+                from tokenizers import Tokenizer
 
-        _offsets_tok = Tokenizer.from_file(str(get_settings().onnx_model_dir / "tokenizer.json"))
-        # tokenizer.json ships with truncation (~128 tokens) enabled — that must
-        # NOT apply when computing chunk offsets, or the chunker only ever sees
-        # the first 128 tokens of each section and silently drops the rest.
-        _offsets_tok.no_truncation()
+                tok = Tokenizer.from_file(
+                    str(get_settings().onnx_model_dir / "tokenizer.json")
+                )
+                # tokenizer.json ships with truncation (~128 tokens) enabled — that
+                # must NOT apply when computing chunk offsets, or the chunker only
+                # ever sees the first 128 tokens of each section and silently drops
+                # the rest.
+                tok.no_truncation()
+                # Published only after no_truncation(): assigning the global first
+                # would let another thread grab a tokenizer that still truncates.
+                _offsets_tok = tok
     return [(int(a), int(b)) for a, b in _offsets_tok.encode(text).offsets if b > a]
 
 

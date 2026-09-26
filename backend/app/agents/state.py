@@ -7,7 +7,7 @@ graph diffs/merges state between node invocations.
 
 from typing import Literal, TypedDict
 
-from app.models.schemas import Chunk, Citation, CriticScores
+from app.models.schemas import Chunk, Citation, CriticScores, RefusalReason
 
 # Imported eagerly, not under TYPE_CHECKING: LangGraph resolves this
 # TypedDict's annotations at runtime to build its state schema, so a string
@@ -32,4 +32,7 @@ class AgentState(TypedDict):
     citations: list[Citation]
     critic: CriticScores | None
     status: Literal["running", "answered", "refused"]
+    # Set alongside status="refused" so the API can tell the user WHY it
+    # declined. None while running or answered.
+    refusal_reason: RefusalReason | None
     conversation_history: list[dict[str, str]]

@@ -20,8 +20,13 @@ from app.agents.graph import build_graph  # noqa: E402
 from app.agents.state import AgentState  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.llm import groq_client  # noqa: E402
+from app.models.schemas import is_insufficient_context  # noqa: E402
 from app.observability.tracing import TraceRecorder  # noqa: E402
-from judge_prompts import FAITHFULNESS_PROMPT, JUDGE_MODEL  # noqa: E402
+from judge_prompts import (  # noqa: E402
+    COMPLETENESS_PROMPT,
+    FAITHFULNESS_PROMPT,
+    JUDGE_MODEL,
+)
 
 GATE_FAITHFULNESS = 0.75
 GATE_REFUSAL = 2 / 3
@@ -38,20 +43,45 @@ def _normalize_chunk_id(chunk_id: str) -> str:
     return _PAGE_SEGMENT_RE.sub("", chunk_id)
 
 
-def judge_faithfulness(question: str, reference: str, candidate: str) -> float:
+def _judge(system_prompt: str, user_content: str, key: str) -> float:
     content, _, _ = groq_client.chat_completion(
         model=JUDGE_MODEL,
         messages=[
-            {"role": "system", "content": FAITHFULNESS_PROMPT},
-            {
-                "role": "user",
-                "content": f"Question: {question}\nReference: {reference}\nCandidate: {candidate}",
-            },
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
         ],
         max_tokens=300,  # headroom for gpt-oss's hidden reasoning tokens, see groq_client.py
         json_mode=True,
     )
-    return float(json.loads(content)["faithfulness"])
+    return float(json.loads(content)[key])
+
+
+def judge_faithfulness(question: str, context: str, candidate: str) -> float:
+    """Are the candidate's claims supported by the evidence actually retrieved?
+
+    Judged against CONTEXT, not against the reference answer. Judging against
+    the reference penalized true, document-supported detail that the terse
+    reference happened to omit — worked examples in judge_prompts.py.
+    """
+    return _judge(
+        FAITHFULNESS_PROMPT,
+        f"Question: {question}\n\nCONTEXT:\n{context}\n\nCandidate: {candidate}",
+        "faithfulness",
+    )
+
+
+def judge_completeness(question: str, reference: str, candidate: str) -> float:
+    """Does the answer actually contain what was asked for?
+
+    The counterweight to judging faithfulness against context alone: without
+    this, an answer could faithfully quote unrelated context and score 1.0
+    while never addressing the question.
+    """
+    return _judge(
+        COMPLETENESS_PROMPT,
+        f"Question: {question}\nReference: {reference}\nCandidate: {candidate}",
+        "completeness",
+    )
 
 
 def run_item(graph, item: dict) -> dict:
@@ -63,30 +93,51 @@ def run_item(graph, item: dict) -> dict:
         "token_budget_left": settings.token_budget,
         "deadline_ts": time.monotonic() + settings.deadline_seconds,
         "retrieved": [], "answer": "", "citations": [], "critic": None,
-        "status": "running", "conversation_history": [],
+        "status": "running", "refusal_reason": None, "conversation_history": [],
     }
     t0 = time.perf_counter()
-    result = graph.invoke(state)
+    try:
+        result = graph.invoke(state)
+    except Exception as exc:  # noqa: BLE001 — reported as "unmeasured", see main()
+        # An upstream failure (Groq rate limit, circuit breaker, network) is NOT
+        # a quality regression, and scoring it as one is worse than not scoring
+        # it at all: a gate that goes red for reasons unrelated to the change
+        # trains everyone to ignore it. Recorded distinctly so main() can say
+        # "could not measure" instead of "faithfulness dropped".
+        return {
+            "id": item["id"], "category": item["category"], "error": f"{type(exc).__name__}: {exc}",
+            "refused": False, "hit": None, "faithfulness": 0.0, "completeness": 0.0,
+            "latency_ms": int((time.perf_counter() - t0) * 1000),
+            "tokens": trace.total_tokens(), "repairs": trace.repair_count, "answer": "",
+        }
     latency_ms = int((time.perf_counter() - t0) * 1000)
 
-    refused = (
-        result["status"] == "refused"
-        or result["answer"].strip() == "INSUFFICIENT_CONTEXT"
-    )
+    # Same helper the API uses, so the harness and production agree on what
+    # counts as a refusal. A strict `== "INSUFFICIENT_CONTEXT"` here would miss
+    # a decorated sentinel that the API correctly treats as a refusal, and the
+    # refusal-rate metric would silently disagree with the shipped behaviour.
+    refused = result["status"] == "refused" or is_insufficient_context(result["answer"])
     retrieved_ids = {_normalize_chunk_id(c.chunk_id) for c in result["retrieved"]}
     expected = {_normalize_chunk_id(c) for c in item["expected_chunk_ids"]}
     hit = bool(expected & retrieved_ids) if expected else None
 
+    context = "\n\n".join(c.text for c in result["retrieved"])
     if item["category"] == "unanswerable":
         faith = 1.0 if refused else 0.0  # refusing IS the correct answer here
+        completeness = 1.0 if refused else 0.0
     elif refused:
         faith = 0.3
+        completeness = 0.0  # a false refusal answers nothing
     else:
-        faith = judge_faithfulness(item["question"], item["reference_answer"], result["answer"])
+        faith = judge_faithfulness(item["question"], context, result["answer"])
+        completeness = judge_completeness(
+            item["question"], item["reference_answer"], result["answer"]
+        )
 
     return {
         "id": item["id"], "category": item["category"], "refused": refused,
-        "hit": hit, "faithfulness": faith, "latency_ms": latency_ms,
+        "hit": hit, "faithfulness": faith, "completeness": completeness,
+        "latency_ms": latency_ms,
         "tokens": trace.total_tokens(), "repairs": trace.repair_count,
         "answer": result["answer"][:120],
     }
@@ -101,12 +152,33 @@ def main() -> None:
     for item in items:
         row = run_item(graph, item)
         rows.append(row)
-        print(f"  [{row['id']:>2}] {row['category']:<12} faith={row['faithfulness']:.2f} "
-              f"hit={row['hit']} refused={row['refused']} {row['latency_ms']}ms")
+        if row.get("error"):
+            print(f"  [{row['id']:>2}] {row['category']:<12} UNMEASURED — {row['error'][:80]}")
+        else:
+            print(f"  [{row['id']:>2}] {row['category']:<12} faith={row['faithfulness']:.2f} "
+                  f"compl={row['completeness']:.2f} hit={row['hit']} "
+                  f"refused={row['refused']} {row['latency_ms']}ms")
+
+    # Items that never produced an answer are excluded from every quality
+    # metric. Averaging a 0.0 from a rate-limited request into faithfulness
+    # would report a quality regression that did not happen.
+    unmeasured = [r for r in rows if r.get("error")]
+    if unmeasured:
+        print(f"\n!! {len(unmeasured)}/{len(rows)} questions could not be measured:")
+        for r in unmeasured:
+            print(f"   [{r['id']}] {r['error'][:120]}")
+        print(
+            "\nEVAL INCONCLUSIVE — these are upstream failures (rate limit, "
+            "circuit breaker, network), not quality regressions. Re-run when "
+            "the upstream is healthy.",
+            file=sys.stderr,
+        )
+        sys.exit(2)  # distinct from 1 (a real gate failure)
 
     answerable = [r for r in rows if r["category"] != "unanswerable"]
     unanswerable = [r for r in rows if r["category"] == "unanswerable"]
     mean_faith = statistics.mean(r["faithfulness"] for r in rows)
+    mean_completeness = statistics.mean(r["completeness"] for r in rows)
     hits = [r["hit"] for r in answerable if r["hit"] is not None]
     hit_rate = sum(hits) / len(hits)
     refusal_rate = sum(r["refused"] for r in unanswerable) / len(unanswerable)
@@ -121,7 +193,9 @@ def main() -> None:
         "# Sentinel — Eval Report", "",
         f"_{time.strftime('%Y-%m-%d %H:%M')} · {len(rows)} questions · judge: {JUDGE_MODEL}_", "",
         "| Metric | Value | Gate |", "|---|---|---|",
-        f"| Mean faithfulness | **{mean_faith:.3f}** | >= {GATE_FAITHFULNESS} |",
+        f"| Mean faithfulness (vs retrieved context) | **{mean_faith:.3f}** | "
+        f">= {GATE_FAITHFULNESS} |",
+        f"| Mean completeness (vs reference) | {mean_completeness:.3f} | not gated yet |",
         f"| Retrieval hit-rate (top-{get_settings().top_k}) | {hit_rate:.0%} | — |",
         f"| Unanswerable refusal-rate | {refusal_rate:.0%} "
         f"({sum(r['refused'] for r in unanswerable)}/{len(unanswerable)}) | >= 2/3 |",
@@ -134,17 +208,19 @@ def main() -> None:
         "Faithfulness on repaired items: "
         + (f"{statistics.mean(r['faithfulness'] for r in repaired):.2f}" if repaired else "n/a"),
         "", "## Per-question results", "",
-        "| # | Category | Faith | Hit | Refused | Repairs | ms |", "|---|---|---|---|---|---|---|",
+        "| # | Category | Faith | Compl | Hit | Refused | Repairs | ms |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     report += [
-        f"| {r['id']} | {r['category']} | {r['faithfulness']:.2f} | {r['hit']} "
+        f"| {r['id']} | {r['category']} | {r['faithfulness']:.2f} "
+        f"| {r['completeness']:.2f} | {r['hit']} "
         f"| {r['refused']} | {r['repairs']} | {r['latency_ms']} |"
         for r in rows
     ]
     (root / "report.md").write_text("\n".join(report), encoding="utf-8")
     print(f"\nreport written: {root / 'report.md'}")
-    print(f"mean_faithfulness={mean_faith:.3f}  hit_rate={hit_rate:.0%}  "
-          f"unanswerable_refusal={refusal_rate:.0%}")
+    print(f"mean_faithfulness={mean_faith:.3f}  mean_completeness={mean_completeness:.3f}  "
+          f"hit_rate={hit_rate:.0%}  unanswerable_refusal={refusal_rate:.0%}")
 
     if mean_faith < GATE_FAITHFULNESS or refusal_rate < GATE_REFUSAL:
         print("EVAL GATES FAILED", file=sys.stderr)

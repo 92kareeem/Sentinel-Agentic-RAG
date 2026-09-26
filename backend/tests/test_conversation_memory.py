@@ -21,6 +21,7 @@ def test_synthesizer_includes_previous_conv_history_in_prompt() -> None:
         "citations": [],
         "critic": None,
         "status": "running",
+        "refusal_reason": None,
         "conversation_history": [
             {"role": "user", "content": "What is the refund policy?"},
             {"role": "assistant", "content": "Refunds take 3 days."},
@@ -56,6 +57,7 @@ def _state_with_history(history: list[dict]) -> AgentState:
         "citations": [],
         "critic": None,
         "status": "running",
+        "refusal_reason": None,
         "conversation_history": history,
     }
 

@@ -52,6 +52,44 @@ def utc_now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _age_seconds(created_at: str) -> float:
+    """Seconds since a record was created; 0.0 if the timestamp is unparseable
+    (a malformed row should never be mistaken for an ancient one)."""
+    try:
+        created = datetime.strptime(created_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    except (ValueError, TypeError):
+        return 0.0
+    return (datetime.now(UTC) - created).total_seconds()
+
+
+def _expire_if_abandoned(record: DocumentRecord) -> DocumentRecord:
+    """Report a long-dead UPLOADING record as FAILED.
+
+    A document is registered as UPLOADING *before* its presigned URL is issued,
+    so an upload the user abandons leaves a row that never advances. Those rows
+    were previously immortal: they sat in the sidebar forever and — because the
+    upload quota counted them — eventually locked the user out of uploading at
+    all.
+
+    This is computed on read rather than written back. A read path that mutates
+    would turn every document listing into a write, and the stored row is still
+    the honest record of what happened; only its PRESENTATION needs to admit
+    the upload is never coming. A durable reaper can come later without
+    changing this behaviour.
+    """
+    if record.status != DocumentStatus.UPLOADING:
+        return record
+    if _age_seconds(record.created_at) < get_settings().upload_abandon_seconds:
+        return record
+    return record.model_copy(
+        update={
+            "status": DocumentStatus.FAILED,
+            "error_code": DocumentErrorCode.UPLOAD_ABANDONED,
+            "error_message": "Upload was never completed.",
+        }
+    )
+
+
 # ---------------------------------------------------------------- local backend
 
 
@@ -139,7 +177,7 @@ def get(document_id: str, *, owner_id: str | None = None) -> DocumentRecord | No
 
     if owner_id is not None and record.owner_id != owner_id:
         return None
-    return record
+    return _expire_if_abandoned(record)
 
 
 def list_for_owner(owner_id: str) -> list[DocumentRecord]:
@@ -158,7 +196,7 @@ def list_for_owner(owner_id: str) -> list[DocumentRecord]:
             for item in resp.get("Items", [])
         ]
 
-    records = [r for r in records if r.status != DocumentStatus.DELETED]
+    records = [_expire_if_abandoned(r) for r in records if r.status != DocumentStatus.DELETED]
     return sorted(records, key=lambda r: r.created_at, reverse=True)
 
 
