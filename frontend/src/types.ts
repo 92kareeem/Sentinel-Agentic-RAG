@@ -177,7 +177,9 @@ export type CaseDiagnosis =
   | "EVIDENCE_OFF_TOPIC"
   | "ANSWER_UNVERIFIABLE"
   | "CITATION_MISATTRIBUTED"
-  | "CAPACITY_EXCEEDED";
+  | "CAPACITY_EXCEEDED"
+  | "USER_REPORTED_INCORRECT"
+  | "USER_REPORTED_INCOMPLETE";
 
 // Plain-language labels. The report is read by whoever owns the documents,
 // who has no reason to know what "EVIDENCE_OFF_TOPIC" means — and a report
@@ -188,6 +190,8 @@ export const DIAGNOSIS_LABEL: Record<CaseDiagnosis, string> = {
   ANSWER_UNVERIFIABLE: "Evidence unclear",
   CITATION_MISATTRIBUTED: "Overlapping sources",
   CAPACITY_EXCEEDED: "System limit",
+  USER_REPORTED_INCORRECT: "Readers say it's wrong",
+  USER_REPORTED_INCOMPLETE: "Readers say it's partial",
 };
 
 export interface KnowledgeGap {
@@ -207,5 +211,26 @@ export interface KnowledgeGapReport {
   answered: number;
   unanswered: number;
   answer_rate: number;
+  // Raw counts, not a rate: the sample is small and self-selected (people
+  // rate answers that surprised them), so a percentage would claim a
+  // precision it doesn't have. See KnowledgeGapReport in schemas.py.
+  answers_rated: number;
+  marked_helpful: number;
+  marked_wrong: number;
   gaps: KnowledgeGap[];
+}
+
+// ----------------------------------------------------------------- feedback
+//
+// Mirrors FeedbackVerdict / FeedbackResponse in schemas.py.
+
+export type FeedbackVerdict = "HELPFUL" | "INCORRECT" | "INCOMPLETE";
+
+export interface FeedbackResponse {
+  trace_id: string;
+  verdict: FeedbackVerdict;
+  // false when this reader already rated this answer — the first verdict
+  // stands, and the UI should say so rather than claim a second one landed.
+  recorded: boolean;
+  case_id: string | null;
 }

@@ -47,6 +47,7 @@ from app.models.schemas import (
     Case,
     CaseDiagnosis,
     CaseOutcome,
+    FeedbackVerdict,
     KnowledgeGap,
     KnowledgeGapReport,
 )
@@ -54,8 +55,10 @@ from app.observability.logging import get_logger
 
 _LOCAL_FILE = "cases.json"
 _STATS_FILE = "case_stats.json"
+_CLAIMS_FILE = "feedback_claims.json"
 _PK_PREFIX = "CASE#"
 _STATS_PK_PREFIX = "STATS#"
+_CLAIM_PK_PREFIX = "FEEDBACK#"
 
 _local_lock = threading.RLock()
 _logger = get_logger()
@@ -87,6 +90,35 @@ RECOMMENDED_ACTION: dict[CaseDiagnosis, str] = {
         "These questions ran out of processing budget rather than evidence. "
         "This is a system limit, not a documentation gap."
     ),
+    CaseDiagnosis.USER_REPORTED_INCORRECT: (
+        "Readers say the answer here was wrong. The evidence was found and "
+        "cited, so this is usually two documents disagreeing, or a passage "
+        "that has been superseded and not removed. Check the cited sections "
+        "against each other first."
+    ),
+    CaseDiagnosis.USER_REPORTED_INCOMPLETE: (
+        "Readers say the answer here was true but partial. Usually the topic "
+        "is split across documents, or a section stops short of the case "
+        "people actually have. Consider consolidating it in one place."
+    ),
+}
+
+# Diagnoses only a human can assert. Separate from GAP_DIAGNOSES because they
+# mean something different: a gap is "the documents do not cover this", while
+# these are "the documents covered it and the answer was still wrong". Both
+# belong on the owner's work list, so the report draws from both sets, but
+# conflating them would let a correctness bug hide inside a content metric.
+FEEDBACK_DIAGNOSES = frozenset(
+    {CaseDiagnosis.USER_REPORTED_INCORRECT, CaseDiagnosis.USER_REPORTED_INCOMPLETE}
+)
+
+# Which diagnosis a verdict opens. HELPFUL is absent deliberately: a good
+# answer is not a case. Recording one would turn the casebook into a query log
+# and bury the failures it exists to surface — the positive signal lives in
+# the daily counters instead, where it serves as a denominator.
+VERDICT_DIAGNOSIS: dict[FeedbackVerdict, CaseDiagnosis] = {
+    FeedbackVerdict.INCORRECT: CaseDiagnosis.USER_REPORTED_INCORRECT,
+    FeedbackVerdict.INCOMPLETE: CaseDiagnosis.USER_REPORTED_INCOMPLETE,
 }
 
 # Diagnoses that mean "the documents cannot answer this". Only these count
@@ -204,6 +236,168 @@ def record(case: Case) -> None:
         _logger.warning("casebook_write_failed", extra={"data": f"{type(exc).__name__}: {exc}"})
 
 
+def feedback_case_id(trace_id: str) -> str:
+    """The one case id a trace's feedback can ever have.
+
+    Deterministic, not random, because it is what makes feedback idempotent:
+    one reader, one answer, one verdict. The first click wins and every later
+    one is a no-op -- see record_feedback().
+    """
+    return f"fb-{trace_id}"
+
+
+def _claims_path() -> Path:
+    return Path(get_settings().index_dir) / _CLAIMS_FILE
+
+
+def record_feedback(
+    *,
+    owner_id: str,
+    trace_id: str,
+    verdict: FeedbackVerdict,
+    day: str,
+    case: Case | None,
+) -> bool:
+    """Record one reader's verdict on one answer, exactly once, atomically.
+
+    Returns True if this call recorded it, False if this reader had already
+    rated this answer (any verdict). Three writes happen together or not at
+    all:
+
+      1. a claim on (owner, trace) -- the idempotency key, for EVERY verdict
+      2. the case, for INCORRECT / INCOMPLETE (HELPFUL opens none)
+      3. the daily counters: rated, and helpful or wrong
+
+    Why atomic rather than three sequential writes, each individually safe:
+    sequencing them leaves two failures that look harmless and are not.
+    Claim-then-case can lose the report -- the claim lands, the case write
+    fails, the reader retries, and the claim now says "already rated" while
+    the case that justified it does not exist. And keying dedupe on the case
+    alone leaves HELPFUL unguarded, since it opens no case: a reader who
+    clicks helpful and then wrong is counted twice, and the one KPI a manager
+    reads from this feature (how often readers flag answers) drifts upward
+    for reasons that have nothing to do with answer quality.
+
+    In DynamoDB this is one TransactWriteItems. It costs twice the write
+    units of a plain put, which on this table's volume is nothing, and it is
+    the only way to make "claim if absent AND write the rest" a single
+    decision two concurrent Lambdas cannot both win.
+
+    RAISES on storage failure, unlike record(). record() is a byproduct of
+    answering and must not cost the answer; here the write IS the request,
+    and telling a reader "thanks, noted" while their report was dropped means
+    the next reader meets the same wrong answer and nobody knows why.
+    """
+    field = "helpful" if verdict == FeedbackVerdict.HELPFUL else "wrong"
+
+    if get_settings().local_mode:
+        with _local_lock:
+            claims_path = _claims_path()
+            claims: dict[str, str] = {}
+            if claims_path.exists():
+                try:
+                    claims = json.loads(claims_path.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    claims = {}
+            key = f"{owner_id}#{trace_id}"
+            if key in claims:
+                return False
+
+            # Build every new state first, then publish. Each file write is
+            # atomic on its own (tmp + os.replace); the lock is what makes the
+            # three appear together to any other request in this process.
+            rows = _local_read_all()
+            if case is not None:
+                rows.append(case.model_dump(mode="json"))
+
+            stats_path = _stats_path()
+            stats: dict[str, dict[str, int]] = {}
+            if stats_path.exists():
+                try:
+                    stats = json.loads(stats_path.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    stats = {}
+            row = stats.setdefault(f"{owner_id}#{day}", {"answered": 0, "refused": 0})
+            row["rated"] = row.get("rated", 0) + 1
+            row[field] = row.get(field, 0) + 1
+
+            claims[key] = verdict.value
+
+            if case is not None:
+                _local_write_all(rows)
+            _atomic_json_write(stats_path, stats)
+            # The claim goes LAST. If anything above raised, no claim exists,
+            # so a retry records normally instead of reporting "already rated"
+            # for a verdict that was never stored.
+            _atomic_json_write(claims_path, claims)
+        return True
+
+    import boto3
+    from boto3.dynamodb.types import TypeSerializer
+    from botocore.exceptions import ClientError
+
+    settings = get_settings()
+    table_name = settings.ddb_table_documents
+    ser = TypeSerializer()
+
+    def typed(item: dict[str, Any]) -> dict[str, Any]:
+        return {k: ser.serialize(v) for k, v in item.items() if v is not None}
+
+    ttl = int(time.time()) + 90 * 86400
+    ops: list[dict[str, Any]] = [
+        {
+            "Put": {
+                "TableName": table_name,
+                "Item": typed({
+                    "pk": f"{_CLAIM_PK_PREFIX}{owner_id}",
+                    "sk": trace_id,
+                    "verdict": verdict.value,
+                    "created_at": utc_now(),
+                    "ttl": ttl,
+                }),
+                "ConditionExpression": "attribute_not_exists(pk)",
+            }
+        },
+        {
+            "Update": {
+                "TableName": table_name,
+                "Key": typed({"pk": f"{_STATS_PK_PREFIX}{owner_id}", "sk": day}),
+                "UpdateExpression": f"ADD rated :one, {field} :one",
+                "ExpressionAttributeValues": {":one": {"N": "1"}},
+            }
+        },
+    ]
+    if case is not None:
+        item = case.model_dump(mode="json")
+        item["pk"] = f"{_PK_PREFIX}{case.owner_id}"
+        item["sk"] = f"{case.created_at}#{case.case_id}"
+        item["ttl"] = ttl
+        ops.append({"Put": {"TableName": table_name, "Item": typed(item)}})
+
+    client = boto3.client("dynamodb", region_name=settings.aws_region)
+    try:
+        client.transact_write_items(TransactItems=ops)
+    except ClientError as exc:
+        err = exc.response.get("Error", {})
+        reasons = exc.response.get("CancellationReasons") or []
+        # The claim is op 0. If IT is the one that failed its condition, this
+        # reader already rated this answer; any other cancellation is a real
+        # failure and must surface.
+        if err.get("Code") == "TransactionCanceledException" and (
+            reasons and reasons[0].get("Code") == "ConditionalCheckFailed"
+        ):
+            return False
+        raise
+    return True
+
+
+def _atomic_json_write(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f".{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def list_for_owner(owner_id: str, *, since: str | None = None) -> list[Case]:
     """Cases for one owner, oldest first. Never raises."""
     try:
@@ -234,9 +428,9 @@ def reset_local() -> None:
     if not get_settings().local_mode:
         raise RuntimeError("reset_local is local_mode only")
     with _local_lock:
-        path = _local_path()
-        if path.exists():
-            path.unlink()
+        for path in (_local_path(), _claims_path()):
+            if path.exists():
+                path.unlink()
 
 
 # -------------------------------------------------------------- daily totals
@@ -293,40 +487,52 @@ def bump_totals(owner_id: str, outcome: CaseOutcome) -> None:
         _logger.warning("casebook_totals_failed", extra={"data": f"{type(exc).__name__}: {exc}"})
 
 
-def totals_for_owner(owner_id: str, *, since_date: str) -> tuple[int, int]:
-    """(answered, refused) since the given YYYY-MM-DD. Never raises."""
+def _stats_rows(owner_id: str, since_date: str) -> list[dict[str, Any]]:
+    """Daily counter rows for one owner since YYYY-MM-DD. Never raises."""
     try:
         if get_settings().local_mode:
             path = _stats_path()
             if not path.exists():
-                return (0, 0)
+                return []
             with _local_lock:
                 data = json.loads(path.read_text(encoding="utf-8"))
-            rows = [
+            return [
                 v
                 for k, v in data.items()
                 if k.startswith(f"{owner_id}#") and k.split("#", 1)[1] >= since_date
             ]
-        else:
-            from boto3.dynamodb.conditions import Key
+        from boto3.dynamodb.conditions import Key
 
-            rows = (
-                _table()
-                .query(
-                    KeyConditionExpression=Key("pk").eq(f"{_STATS_PK_PREFIX}{owner_id}")
-                    & Key("sk").gte(since_date)
-                )
-                .get("Items", [])
+        rows: list[dict[str, Any]] = (
+            _table()
+            .query(
+                KeyConditionExpression=Key("pk").eq(f"{_STATS_PK_PREFIX}{owner_id}")
+                & Key("sk").gte(since_date)
             )
-        return (
-            sum(int(r.get("answered", 0)) for r in rows),
-            sum(int(r.get("refused", 0)) for r in rows),
+            .get("Items", [])
         )
+        return rows
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
             "casebook_totals_read_failed", extra={"data": f"{type(exc).__name__}: {exc}"}
         )
-        return (0, 0)
+        return []
+
+
+def _sum(rows: list[dict[str, Any]], field: str) -> int:
+    return sum(int(r.get(field, 0)) for r in rows)
+
+
+def totals_for_owner(owner_id: str, *, since_date: str) -> tuple[int, int]:
+    """(answered, refused) since the given YYYY-MM-DD. Never raises."""
+    rows = _stats_rows(owner_id, since_date)
+    return (_sum(rows, "answered"), _sum(rows, "refused"))
+
+
+def feedback_totals_for_owner(owner_id: str, *, since_date: str) -> tuple[int, int, int]:
+    """(rated, helpful, wrong) since the given YYYY-MM-DD. Never raises."""
+    rows = _stats_rows(owner_id, since_date)
+    return (_sum(rows, "rated"), _sum(rows, "helpful"), _sum(rows, "wrong"))
 
 
 # ------------------------------------------------------------ gap clustering
@@ -406,12 +612,19 @@ def knowledge_gaps(owner_id: str, *, window_days: int = 30) -> KnowledgeGapRepor
     # From the daily rollup, not from the cases: the casebook holds failures
     # only, so counting it would report an answer rate near zero and make a
     # healthy system look broken.
-    answered, unanswered = totals_for_owner(owner_id, since_date=since[:10])
+    # One read serves both the answer counters and the feedback counters --
+    # they share a row per day.
+    stats = _stats_rows(owner_id, since[:10])
+    answered, unanswered = _sum(stats, "answered"), _sum(stats, "refused")
     total = answered + unanswered
 
     gaps: list[KnowledgeGap] = []
     for diagnosis in CaseDiagnosis:
-        if diagnosis not in GAP_DIAGNOSES:
+        # Reader-reported problems sit beside the gaps: an answer people say is
+        # wrong is at least as urgent for an owner as a question nobody could
+        # answer, and arguably more so -- a refusal wastes a reader's time, a
+        # wrong answer gets acted on.
+        if diagnosis not in GAP_DIAGNOSES and diagnosis not in FEEDBACK_DIAGNOSES:
             continue
         for cluster in _cluster([c for c in cases if c.diagnosis == diagnosis]):
             # The longest question is the most specific one, and therefore the
@@ -445,6 +658,9 @@ def knowledge_gaps(owner_id: str, *, window_days: int = 30) -> KnowledgeGapRepor
         # names: this is the rate among questions the system had something to
         # say about, not a claim about every query ever made.
         answer_rate=round(answered / total, 4) if total else 1.0,
+        answers_rated=_sum(stats, "rated"),
+        marked_helpful=_sum(stats, "helpful"),
+        marked_wrong=_sum(stats, "wrong"),
         gaps=gaps,
     )
 

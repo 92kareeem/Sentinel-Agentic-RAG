@@ -1,6 +1,7 @@
 import { renderAnswerMarkdown } from "../lib/markdown";
 import type { ChatMessage, Citation, TraceRecord } from "../types";
 import { REFUSAL_COPY } from "../types";
+import { FeedbackBar } from "./FeedbackBar";
 import { ResponseDetails } from "./ResponseDetails";
 
 interface Props {
@@ -66,6 +67,7 @@ export function MessageBubble({ message, onCiteClick, trace }: Props) {
           </div>
           <p>{copy.body}</p>
           <p className="refusal-hint">{copy.hint}</p>
+          <FeedbackBar traceId={message.traceId} variant="refusal" />
         </div>
       </div>
     );
@@ -105,6 +107,8 @@ export function MessageBubble({ message, onCiteClick, trace }: Props) {
         )}
 
         <VerifiedBadge faithfulness={message.critic.faithfulness} sourceCount={message.citations.length} />
+
+        <FeedbackBar traceId={message.traceId} variant="answer" />
 
         <ResponseDetails
           traceId={message.traceId}

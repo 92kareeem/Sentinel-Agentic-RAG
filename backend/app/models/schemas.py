@@ -388,6 +388,16 @@ class CaseDiagnosis(StrEnum):
     CITATION_MISATTRIBUTED = "CITATION_MISATTRIBUTED"  # answered, but attribution needed repair
     # Neither: an operational limit fired before the question got a fair run.
     CAPACITY_EXCEEDED = "CAPACITY_EXCEEDED"
+    # Reported by the person who READ the answer. Every diagnosis above is
+    # inferred from the graph's own state, which means the system can only
+    # learn from failures it already noticed. These two are the opposite: an
+    # answer that passed every gate, shipped with citations, and was still
+    # wrong. Nothing upstream can detect that — if it could, the grounding
+    # check would have caught it — so without a human saying so it is
+    # invisible, and a confidently wrong answer is the failure a reader
+    # actually remembers.
+    USER_REPORTED_INCORRECT = "USER_REPORTED_INCORRECT"  # shipped, and wrong
+    USER_REPORTED_INCOMPLETE = "USER_REPORTED_INCOMPLETE"  # shipped, and partial
 
 
 class CaseOutcome(StrEnum):
@@ -420,6 +430,67 @@ class Case(BaseModel):
     repaired_citations: int = 0
     repair_count: int = 0
     created_at: str
+    # What the reader says the answer should have been. Optional, and the
+    # single most valuable field in this model: a refusal tells you a question
+    # failed, but a correction tells you what passing looks like — which is
+    # the difference between a case that can only ever be a report line and a
+    # case that can be promoted into a regression test.
+    correction: str | None = None
+
+
+class FeedbackVerdict(StrEnum):
+    """What a reader says about an answer they were given.
+
+    Three values, not a star rating. A rating asks the reader to summarise
+    their opinion as a number, which is easy to collect and almost impossible
+    to act on — nobody can fix a 3.2. These three map onto different repairs:
+    HELPFUL is the denominator that makes the other two mean something,
+    INCORRECT says the answer contradicted the documents or the world, and
+    INCOMPLETE says it was true as far as it went.
+
+    The split matters because the two failures have different owners.
+    Incorrect is usually ours (grounding passed something it should not have,
+    or two documents disagree); incomplete is usually the corpus's (the topic
+    is real but split across pages, or a section stops short).
+    """
+
+    HELPFUL = "HELPFUL"
+    INCORRECT = "INCORRECT"
+    INCOMPLETE = "INCOMPLETE"
+
+
+class FeedbackRequest(BaseModel):
+    """One reader's verdict on one answer, identified by its trace.
+
+    Keyed on trace_id rather than on the question text: the trace is the only
+    identifier the client already holds that the server can verify, and it
+    carries the owner, so feedback cannot be filed against somebody else's
+    answer by guessing at a question. The question itself is read back from
+    the trace rather than accepted from the client, for the same reason — a
+    caller must not be able to attach an arbitrary question to a real answer.
+    """
+
+    trace_id: str = Field(min_length=1, max_length=100)
+    verdict: FeedbackVerdict
+    # Free text, optional, and scrubbed like every other user string before it
+    # is stored. Capped at a paragraph: this is "what should it have said",
+    # not a support ticket.
+    correction: str | None = Field(default=None, max_length=2000)
+
+
+class FeedbackResponse(BaseModel):
+    """Acknowledgement, and whether this verdict opened a case.
+
+    `recorded` is false when the same reader has already rated this answer.
+    Saying so plainly, rather than silently writing a second row, keeps the
+    counts honest: a reader who clicks twice must not make a single bad
+    answer look like two.
+    """
+
+    trace_id: str
+    verdict: FeedbackVerdict
+    recorded: bool
+    case_id: str | None = None
 
 
 class KnowledgeGap(BaseModel):
@@ -454,4 +525,13 @@ class KnowledgeGapReport(BaseModel):
     answered: int
     unanswered: int
     answer_rate: float
+    # Feedback counts, reported separately from the answer rate on purpose.
+    # Answer rate measures whether the system produced something; these
+    # measure whether it was any good, and only a reader can say. Kept as raw
+    # counts rather than a percentage because the denominator is small and
+    # self-selected — people rate answers that surprised them — so a headline
+    # "87% helpful" would imply a precision this sample does not have.
+    answers_rated: int = 0
+    marked_helpful: int = 0
+    marked_wrong: int = 0
     gaps: list[KnowledgeGap]
