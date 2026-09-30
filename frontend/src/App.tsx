@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, deleteDocument, getTrace, listDocuments, postQuery } from "./api";
 import { ChatThread } from "./components/ChatThread";
-import { Composer } from "./components/Composer";
+import { COMPOSER_ID, Composer } from "./components/Composer";
 import { Header } from "./components/Header";
 import { InsightsModal } from "./components/InsightsModal";
 import { Sidebar } from "./components/Sidebar";
@@ -75,7 +75,6 @@ export default function App() {
   }, [documents, refreshDocuments]);
 
   const activeDoc = documents.find((d) => d.document_id === activeDocId) ?? null;
-  const scopeLabel = activeDoc ? `Answering from ${activeDoc.filename}` : "Asking across all documents";
 
   const ask = async (query: string) => {
     const userMsg: ChatMessage = { id: uid(), role: "user", text: query };
@@ -132,10 +131,14 @@ export default function App() {
     }
   };
 
-  const onDelete = async (docId: string) => {
+  const onDelete = async (doc: DocumentSummary) => {
+    // Deleting removes the document from every future answer and cannot be
+    // undone from here, so it asks first. The button sits right next to the
+    // row you click to select a document — an easy miss on a touch screen.
+    if (!window.confirm(`Delete ${doc.filename}? It will no longer be used to answer questions.`)) return;
     try {
-      await deleteDocument(docId);
-      if (activeDocId === docId) setActiveDocId(null);
+      await deleteDocument(doc.document_id);
+      if (activeDocId === doc.document_id) setActiveDocId(null);
       refreshDocuments();
     } catch {
       // Surfacing this inline would need its own toast primitive; the
@@ -148,18 +151,25 @@ export default function App() {
     setMessages([]);
     setTraces({});
     historyRef.current = [];
+    // The "New chat" button disappears with the conversation, which would
+    // leave keyboard focus on nothing; put it where the next question goes.
+    document.getElementById(COMPOSER_ID)?.focus();
   };
 
   return (
     <div className="shell">
+      <a className="skip-link" href={`#${COMPOSER_ID}`}>
+        Skip to question
+      </a>
       <Header
         onMenuClick={() => setSidebarOpen(true)}
+        menuOpen={sidebarOpen}
         onNewChat={newChat}
         onInsightsClick={() => setInsightsOpen(true)}
         hasMessages={messages.length > 0}
       />
 
-      <div className="body">
+      <div className="layout">
         <Sidebar
           documents={documents}
           activeDocId={activeDocId}
@@ -167,21 +177,32 @@ export default function App() {
             setActiveDocId(id);
             setSidebarOpen(false);
           }}
-          onUploadClick={() => setUploadOpen(true)}
+          onUploadClick={() => {
+            // Close the phone sidebar first: two overlays stacked means two
+            // focus traps fighting over the keyboard.
+            setSidebarOpen(false);
+            setUploadOpen(true);
+          }}
           onDelete={onDelete}
           open={sidebarOpen}
           onCloseMobile={() => setSidebarOpen(false)}
         />
 
-        <main className="chat-pane">
+        <main className="chat-pane" id="main">
           <ChatThread
             messages={messages}
             traces={traces}
             onCiteClick={setCitation}
             hasDocuments={documents.some((d) => d.status !== "DELETED")}
             onExample={ask}
+            busy={loading}
           />
-          <Composer loading={loading} onSubmit={ask} scopeLabel={scopeLabel} />
+          <Composer
+            loading={loading}
+            onSubmit={ask}
+            scopedTo={activeDoc?.filename ?? null}
+            onClearScope={() => setActiveDocId(null)}
+          />
         </main>
       </div>
 

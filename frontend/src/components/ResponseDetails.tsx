@@ -8,6 +8,7 @@ const STEP_LABEL: Record<string, string> = {
   repair_rewrite: "Repair (rewrite)",
   repair_escalate: "Repair (escalate)",
   grounding_check: "Grounding check",
+  refusal: "Refusal",
 };
 
 interface Props {
@@ -20,17 +21,14 @@ interface Props {
   trace: TraceRecord | null;
 }
 
-// Everything a developer wants (trace id, per-step timings, raw critic
-// scores) lives here, collapsed by default, instead of being permanently
-// visible in the main thread — see brief section 13 ("Advanced / debug
-// details"). Nothing here is fabricated: every value is a field the backend
-// already returns (QueryResponse.critic/model_used/latency_ms/trace_id, or
-// TraceRecord.steps fetched separately via GET /v1/traces/{id}).
+// What a developer wants — trace id, per-step timings, raw critic scores —
+// collapsed by default rather than permanently in the thread. Nothing here is
+// invented: every value is a field the backend already returns.
 export function ResponseDetails({ traceId, critic, repairCount, model, latencyMs, sourceCount, trace }: Props) {
   return (
-    <details className="response-details">
+    <details className="details">
       <summary>Response details</summary>
-      <dl className="rd-grid">
+      <dl className="kv">
         <dt>Trace ID</dt>
         <dd className="mono">{traceId}</dd>
         <dt>Retrieval</dt>
@@ -46,17 +44,17 @@ export function ResponseDetails({ traceId, critic, repairCount, model, latencyMs
         <dt>Repairs</dt>
         <dd>{repairCount}</dd>
         <dt>Latency</dt>
-        <dd>{(latencyMs / 1000).toFixed(1)}s</dd>
+        <dd>{(latencyMs / 1000).toFixed(1)} s</dd>
       </dl>
       {trace && trace.steps.length > 0 && (
-        <div className="rd-timeline">
+        <ul className="timeline" aria-label="Time spent per step">
           {trace.steps.map((s, i) => (
-            <div key={i} className="rd-timeline-row">
+            <li key={i}>
               <span>{STEP_LABEL[s.name] ?? s.name}</span>
               <span className="mono">{s.duration_ms} ms</span>
-            </div>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </details>
   );

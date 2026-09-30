@@ -1,66 +1,78 @@
+import { Icon } from "./Icon";
+
 interface Props {
   hasDocuments: boolean;
   onExample: (q: string) => void;
 }
 
-// Generic examples only — the brief explicitly warns against fabricating
-// example questions tied to document content the backend hasn't told us
-// about (section 15). These are safe regardless of what's uploaded.
+// Generic on purpose: example questions must not assume content the backend
+// has not told us about. These are true of any uploaded document.
 const EXAMPLES = [
   "What is this document about?",
   "Summarize the key points",
   "What are the main policies or requirements described here?",
 ];
 
+// Must match what UploadModal actually accepts (.pdf, .md, .txt). This used
+// to promise "Word doc", which the uploader rejects.
 const STEPS = [
-  { n: "1", title: "Upload", body: "Add a PDF, Word doc, or text file." },
-  { n: "2", title: "Ask", body: "Ask a question in plain language." },
-  { n: "3", title: "Verify", body: "Get an answer with page-level citations." },
+  { title: "Upload", body: "Add a PDF, Markdown or text file." },
+  { title: "Ask", body: "Ask a question in plain language." },
+  { title: "Verify", body: "Every answer cites the passage it came from." },
 ];
 
-const TRUST_BADGES = ["Every sentence cited", "Grounded in your documents", "Refuses to guess"];
+const TRUST = ["Every sentence cited", "Grounded in your documents", "Refuses to guess"];
 
 export function EmptyState({ hasDocuments, onExample }: Props) {
   return (
-    <div className="empty-state">
-      <div className="empty-mark">S</div>
-      <h2>Ask questions about your documents</h2>
-      <p className="empty-sub">
-        Sentinel reads your documents and answers only from what's actually written in them —
-        every claim traced back to a page, so you can trust the answer without re-reading the source.
+    <div className="empty">
+      <div className="empty-mark" aria-hidden="true">
+        S
+      </div>
+      <h2 className="empty-title">Ask questions about your documents</h2>
+      <p className="empty-lead">
+        Sentinel answers only from what is actually written in your documents, and traces every
+        claim back to its source — so you can trust the answer without re-reading the document.
       </p>
 
-      <div className="trust-row">
-        {TRUST_BADGES.map((b) => (
-          <span key={b} className="trust-badge">
-            <span className="check-dot" aria-hidden /> {b}
-          </span>
+      <ul className="pill-row" aria-label="How answers are checked">
+        {TRUST.map((t) => (
+          <li key={t} className="pill">
+            <Icon name="check" size={14} />
+            {t}
+          </li>
         ))}
-      </div>
+      </ul>
 
-      <div className="steps-row">
-        {STEPS.map((s) => (
-          <div key={s.n} className="step-card">
-            <div className="step-num">{s.n}</div>
-            <div className="step-title">{s.title}</div>
-            <div className="step-body">{s.body}</div>
-          </div>
+      <ol className="steps" aria-label="How it works">
+        {STEPS.map((s, i) => (
+          <li key={s.title} className="step">
+            <span className="step-num" aria-hidden="true">
+              {i + 1}
+            </span>
+            <h3 className="step-title">{s.title}</h3>
+            <p className="step-body">{s.body}</p>
+          </li>
         ))}
-      </div>
+      </ol>
 
-      {!hasDocuments && (
-        <div className="empty-hint">Upload a document from the sidebar to get started.</div>
-      )}
-
-      {hasDocuments && (
-        <div className="empty-examples">
-          <div className="empty-examples-label">Try asking</div>
-          {EXAMPLES.map((q) => (
-            <button key={q} className="example-chip" onClick={() => onExample(q)}>
-              {q}
-            </button>
-          ))}
-        </div>
+      {hasDocuments ? (
+        <section className="examples" aria-labelledby="examples-heading">
+          <h3 id="examples-heading" className="section-label">
+            Try asking
+          </h3>
+          <ul className="example-list">
+            {EXAMPLES.map((q) => (
+              <li key={q}>
+                <button type="button" className="example" onClick={() => onExample(q)}>
+                  {q}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : (
+        <p className="empty-hint">Upload a document from the documents panel to get started.</p>
       )}
     </div>
   );

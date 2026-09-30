@@ -1,28 +1,25 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { getKnowledgeGaps } from "../api";
-import type { KnowledgeGap, KnowledgeGapReport } from "../types";
+import { useDialog } from "../lib/useDialog";
+import type { CaseDiagnosis, KnowledgeGap, KnowledgeGapReport } from "../types";
 import { DIAGNOSIS_LABEL } from "../types";
+import { Icon } from "./Icon";
 
 interface Props {
   onClose: () => void;
 }
 
-type State =
-  | { kind: "loading" }
-  | { kind: "ready"; report: KnowledgeGapReport }
-  | { kind: "error" };
+type State = { kind: "loading" } | { kind: "ready"; report: KnowledgeGapReport } | { kind: "error" };
 
-// The only screen in the product written for the person who OWNS the
-// documents rather than the person asking questions. Everything else answers
-// "what do my documents say?"; this answers "what are my documents missing?",
-// which is the question a business is actually paying to have answered.
-//
-// Written to be read by someone non-technical: no chunk counts, no critic
-// scores, no retrieval metrics. Every number here is one a manager could put
-// in a status update, and every gap carries an action rather than a diagnosis
-// code.
+// The one screen written for whoever OWNS the documents rather than whoever
+// is asking questions: "what are my documents missing, and what did readers
+// say was wrong?" Written for someone non-technical — every number is one a
+// manager could put in a status update, and every row carries an action
+// rather than a diagnosis code.
 export function InsightsModal({ onClose }: Props) {
   const [state, setState] = useState<State>({ kind: "loading" });
+  const ref = useDialog<HTMLDivElement>(true, onClose);
+  const titleId = useId();
 
   useEffect(() => {
     getKnowledgeGaps()
@@ -31,37 +28,53 @@ export function InsightsModal({ onClose }: Props) {
   }, []);
 
   return (
-    <div className="modal-scrim" onClick={onClose}>
+    <div className="scrim" onClick={onClose}>
       <div
-        className="modal modal-wide"
+        ref={ref}
+        className="dialog dialog-wide"
         role="dialog"
         aria-modal="true"
-        aria-label="Coverage insights"
+        aria-labelledby={titleId}
+        aria-describedby={`${titleId}-sub`}
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="modal-header">
+        <div className="dialog-header">
           <div>
-            <h3>Where your documents fall short</h3>
-            <p className="modal-sub">
-              Questions your team asked that the documents couldn&rsquo;t answer, grouped by topic.
+            {/* Named like the button that opens it. It was "Where your
+                documents fall short" behind a button labelled "Coverage". */}
+            <h2 id={titleId} className="dialog-title">
+              Coverage
+            </h2>
+            <p id={`${titleId}-sub`} className="dialog-sub">
+              Questions your documents couldn&rsquo;t answer, and answers readers flagged as wrong, ranked by
+              how often they come up.
             </p>
           </div>
-          <button className="drawer-close" onClick={onClose} aria-label="Close">
-            ×
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon dialog-close"
+            onClick={onClose}
+            aria-label="Close coverage"
+          >
+            <Icon name="close" size={18} />
           </button>
-        </header>
+        </div>
 
-        {state.kind === "loading" && (
-          <div className="insights-empty">
-            <span className="spinner" aria-hidden /> Loading coverage…
-          </div>
-        )}
-
-        {state.kind === "error" && (
-          <div className="insights-empty">Coverage insights aren&rsquo;t available right now.</div>
-        )}
-
-        {state.kind === "ready" && <Report report={state.report} />}
+        <div className="dialog-body" aria-busy={state.kind === "loading"}>
+          {state.kind === "loading" && (
+            <div className="notice" role="status">
+              <span className="spinner" aria-hidden="true" />
+              Loading coverage…
+            </div>
+          )}
+          {state.kind === "error" && (
+            <div className="notice" role="alert">
+              <p className="notice-title">Coverage isn&rsquo;t available right now</p>
+              <p>Please try again in a moment.</p>
+            </div>
+          )}
+          {state.kind === "ready" && <Report report={state.report} />}
+        </div>
       </div>
     </div>
   );
@@ -71,49 +84,36 @@ function Report({ report }: { report: KnowledgeGapReport }) {
   const pct = Math.round(report.answer_rate * 100);
 
   if (report.total_questions === 0) {
-    // An empty workspace is not a failing one. Rendering 0% here would be a
-    // scary, meaningless number — there is no denominator yet.
+    // An empty workspace is not a failing one. 0% here would be a scary and
+    // meaningless number — there is no denominator yet.
     return (
-      <div className="insights-empty">
-        <div className="insights-empty-title">No questions asked yet</div>
-        <p>
-          Once people start asking, anything your documents can&rsquo;t answer shows up here as a
-          to-do list.
-        </p>
+      <div className="notice">
+        <p className="notice-title">No questions asked yet</p>
+        <p>Once people start asking, anything your documents can&rsquo;t answer shows up here as a to-do list.</p>
       </div>
     );
   }
 
   return (
-    <div className="insights">
-      <div className="kpis">
+    <>
+      <ul className="kpis" aria-label="Summary">
         <Kpi
           label="Questions answered"
           value={`${pct}%`}
           tone={pct >= 90 ? "good" : pct >= 75 ? "warn" : "bad"}
-          sub={`${report.answered} of ${report.total_questions} in the last ${report.window_days} days`}
+          sub={`${report.answered} of ${report.total_questions}, last ${report.window_days} days`}
         />
         <Kpi
-          label="Topics to fix"
-          value={String(report.gaps.length)}
-          tone={report.gaps.length === 0 ? "good" : "warn"}
-          // Not "need documentation": the list now also holds answers readers
-          // flagged as wrong, and some of those are ours to fix, not the
-          // owner's. Each row's action line says which.
-          sub={report.gaps.length === 1 ? "topic needs attention" : "topics need attention"}
-        />
-        <Kpi
-          label="Unanswered questions"
+          label="Unanswered"
           value={String(report.unanswered)}
           tone={report.unanswered === 0 ? "good" : "warn"}
-          sub="each one is someone who had to go ask a colleague"
+          sub="people who had to ask a colleague"
         />
         <Kpi
           label="Flagged by readers"
           value={String(report.marked_wrong)}
-          // Only "bad" when readers actually flagged something. With no
-          // ratings at all this is neutral, not good: silence isn't evidence
-          // that the answers were right.
+          // Neutral, not green, when nobody has rated anything: silence is
+          // not evidence that the answers were right.
           tone={report.answers_rated === 0 ? "neutral" : report.marked_wrong === 0 ? "good" : "bad"}
           sub={
             report.answers_rated === 0
@@ -121,24 +121,32 @@ function Report({ report }: { report: KnowledgeGapReport }) {
               : `of ${report.answers_rated} rated answer${report.answers_rated === 1 ? "" : "s"}`
           }
         />
-      </div>
+        <Kpi
+          label="Topics to fix"
+          value={String(report.gaps.length)}
+          tone={report.gaps.length === 0 ? "good" : "warn"}
+          sub="ranked below"
+        />
+      </ul>
 
       {report.gaps.length === 0 ? (
-        <div className="insights-empty">
-          <div className="insights-empty-title">Nothing needs attention</div>
-          <p>
-            Every question in this period was answered from your documents, and no reader flagged an
-            answer as wrong.
-          </p>
+        <div className="notice">
+          <p className="notice-title">Nothing needs attention</p>
+          <p>Every question in this period was answered, and no reader flagged an answer as wrong.</p>
         </div>
       ) : (
-        <ol className="gap-list">
-          {report.gaps.map((gap, i) => (
-            <GapRow key={i} gap={gap} rank={i + 1} />
-          ))}
-        </ol>
+        <section aria-labelledby="gaps-heading">
+          <h3 id="gaps-heading" className="section-label">
+            Topics to fix, most asked first
+          </h3>
+          <ol className="gap-list">
+            {report.gaps.map((gap, i) => (
+              <GapRow key={`${gap.diagnosis}-${gap.topic}`} gap={gap} rank={i + 1} />
+            ))}
+          </ol>
+        </section>
       )}
-    </div>
+    </>
   );
 }
 
@@ -153,53 +161,69 @@ function Kpi({
   sub: string;
   tone: "good" | "warn" | "bad" | "neutral";
 }) {
+  // Read as one phrase ("79% Questions answered, 19 of 24, last 30 days"),
+  // not three unrelated fragments. The coloured edge is decoration; the
+  // numbers and words carry the meaning.
   return (
-    <div className={`kpi kpi-${tone}`}>
-      <div className="kpi-value">{value}</div>
-      <div className="kpi-label">{label}</div>
-      <div className="kpi-sub">{sub}</div>
-    </div>
+    <li className={`kpi kpi-${tone}`}>
+      <span className="kpi-value">{value}</span>
+      <span className="kpi-label">{label}</span>
+      <span className="kpi-sub">{sub}</span>
+    </li>
   );
+}
+
+// What readers reported is more urgent than a gap: a gap wastes someone's
+// time, a wrong answer gets acted on. The badge colour says which is which.
+function badgeTone(d: CaseDiagnosis): string {
+  if (d === "USER_REPORTED_INCORRECT" || d === "USER_REPORTED_INCOMPLETE") return "badge-bad";
+  if (d === "NO_EVIDENCE_FOUND" || d === "EVIDENCE_OFF_TOPIC") return "badge-warn";
+  return "badge-neutral";
 }
 
 function GapRow({ gap, rank }: { gap: KnowledgeGap; rank: number }) {
   const [open, setOpen] = useState(false);
+  const listId = useId();
   // Only worth expanding when there is more than the topic line to show.
   const extras = gap.example_questions.filter((q) => q !== gap.topic);
 
   return (
     <li className="gap">
-      <div className="gap-head">
-        <span className="gap-rank" aria-hidden>
-          {rank}
-        </span>
-        <div className="gap-main">
-          <div className="gap-topic">{gap.topic}</div>
-          <div className="gap-meta">
-            <span className="gap-count">
-              asked {gap.question_count} {gap.question_count === 1 ? "time" : "times"}
-            </span>
-            <span className="gap-diagnosis">{DIAGNOSIS_LABEL[gap.diagnosis] ?? gap.diagnosis}</span>
-          </div>
+      <span className="gap-rank" aria-hidden="true">
+        {rank}
+      </span>
+      <div>
+        <h4 className="gap-topic">{gap.topic}</h4>
+        <div className="gap-meta">
+          <span>
+            Asked {gap.question_count} {gap.question_count === 1 ? "time" : "times"}
+          </span>
+          <span className={`badge ${badgeTone(gap.diagnosis)}`}>
+            {DIAGNOSIS_LABEL[gap.diagnosis] ?? gap.diagnosis}
+          </span>
         </div>
+        <p className="gap-action">{gap.recommended_action}</p>
+        {extras.length > 0 && (
+          <>
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => setOpen((o) => !o)}
+              aria-expanded={open}
+              aria-controls={listId}
+            >
+              {open ? "Hide other phrasings" : `Show ${extras.length} other phrasing${extras.length === 1 ? "" : "s"}`}
+            </button>
+            {open && (
+              <ul id={listId} className="gap-examples">
+                {extras.map((q) => (
+                  <li key={q}>{q}</li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
       </div>
-
-      <p className="gap-action">{gap.recommended_action}</p>
-
-      {extras.length > 0 && (
-        <>
-          <button className="gap-toggle" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-            {open ? "Hide" : `Show ${extras.length} other phrasing${extras.length === 1 ? "" : "s"}`}
-          </button>
-          {open && (
-            <ul className="gap-examples">
-              {extras.map((q, i) => (
-                <li key={i}>{q}</li>
-              ))}
-            </ul>
-          )}
-        </>
-      )}
     </li>
   );
 }

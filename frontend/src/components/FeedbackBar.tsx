@@ -1,7 +1,9 @@
-import { type ReactNode, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { ApiError, postFeedback } from "../api";
 import { CORRECTION_MAX, feedbackDoneCopy, feedbackErrorCopy } from "../lib/feedback";
+import { prefersReducedMotion } from "../lib/useDialog";
 import type { FeedbackVerdict } from "../types";
+import { Icon } from "./Icon";
 
 // The one place a reader can tell the system it was wrong.
 //
@@ -20,10 +22,11 @@ import type { FeedbackVerdict } from "../types";
 // only the second can become a regression test.
 
 type Variant = "answer" | "refusal";
+type Negative = Exclude<FeedbackVerdict, "HELPFUL">;
 
 type State =
   | { kind: "idle" }
-  | { kind: "choosing"; verdict: Exclude<FeedbackVerdict, "HELPFUL"> }
+  | { kind: "choosing"; verdict: Negative }
   | { kind: "sending"; verdict: FeedbackVerdict }
   | { kind: "done"; verdict: FeedbackVerdict; recorded: boolean }
   | { kind: "error"; verdict: FeedbackVerdict; message: string };
@@ -40,6 +43,30 @@ export function FeedbackBar({ traceId, variant }: Props) {
   // being written.
   const [correction, setCorrection] = useState("");
   const fieldId = useId();
+  const formRef = useRef<HTMLDivElement>(null);
+  const openerRef = useRef<HTMLButtonElement>(null);
+  // The form is showing while choosing, and stays showing while a negative
+  // verdict is being sent or has failed (so the typed correction stays put).
+  // HELPFUL never opens it: it is sent in one click from the thumbs row.
+  const formOpen =
+    state.kind === "choosing" ||
+    ((state.kind === "sending" || state.kind === "error") && state.verdict !== "HELPFUL");
+  const wasOpen = useRef(false);
+
+  // Opening the form moves focus into it and brings it on screen — it opens
+  // BELOW the answer, which on a long answer is below the fold, and a form
+  // that appears off-screen reads as a button that did nothing. Closing it
+  // (Cancel) returns focus to the button that opened it.
+  useEffect(() => {
+    if (formOpen && !wasOpen.current) {
+      const form = formRef.current;
+      form?.scrollIntoView({ block: "nearest", behavior: prefersReducedMotion() ? "auto" : "smooth" });
+      form?.querySelector<HTMLElement>("[data-autofocus]")?.focus({ preventScroll: true });
+    } else if (!formOpen && wasOpen.current && state.kind === "idle") {
+      openerRef.current?.focus();
+    }
+    wasOpen.current = formOpen;
+  }, [formOpen, state.kind]);
 
   async function send(verdict: FeedbackVerdict) {
     setState({ kind: "sending", verdict });
@@ -58,84 +85,86 @@ export function FeedbackBar({ traceId, variant }: Props) {
 
   if (state.kind === "done") {
     return (
-      <div className="feedback-bar" role="status">
-        <span className="feedback-done">{feedbackDoneCopy(state.verdict, state.recorded)}</span>
-      </div>
+      <span className="feedback-done" role="status">
+        <Icon name="check" size={14} />
+        {feedbackDoneCopy(state.verdict, state.recorded)}
+      </span>
     );
   }
 
-  if (state.kind === "choosing" || state.kind === "sending" || state.kind === "error") {
-    const verdict = state.verdict;
-    // HELPFUL is sent in one click and never opens the form; an error on it
-    // is shown inline in the idle row below instead.
-    if (verdict !== "HELPFUL") {
-      const sending = state.kind === "sending";
-      return (
-        <div className="feedback-form">
-          {variant === "answer" && (
-            <div className="feedback-choice" role="radiogroup" aria-label="What was wrong with it?">
-              <Chip
-                active={verdict === "INCORRECT"}
-                disabled={sending}
-                onClick={() => setState({ kind: "choosing", verdict: "INCORRECT" })}
-              >
-                It&rsquo;s wrong
-              </Chip>
-              <Chip
-                active={verdict === "INCOMPLETE"}
-                disabled={sending}
-                onClick={() => setState({ kind: "choosing", verdict: "INCOMPLETE" })}
-              >
-                It&rsquo;s missing something
-              </Chip>
-            </div>
-          )}
-
-          <label className="feedback-label" htmlFor={fieldId}>
-            {variant === "refusal"
-              ? "What’s the answer, and where is it covered? (optional)"
-              : "What should it have said? (optional)"}
-          </label>
-          <textarea
-            id={fieldId}
-            className="feedback-text"
-            rows={3}
-            maxLength={CORRECTION_MAX}
-            value={correction}
-            disabled={sending}
-            onChange={(e) => setCorrection(e.target.value)}
-            placeholder={
-              variant === "refusal"
-                ? "e.g. The refund policy covers this — it's 30 days."
-                : "e.g. It's 30 days, not 14."
-            }
-          />
-
-          {state.kind === "error" && (
-            <div className="feedback-error" role="alert">
-              {state.message}
-            </div>
-          )}
-
-          <div className="feedback-actions">
+  if (formOpen) {
+    const verdict = state.verdict as Negative;
+    const sending = state.kind === "sending";
+    return (
+      <div className="feedback-form" ref={formRef}>
+        {variant === "answer" && (
+          // Two toggle buttons (aria-pressed), not radio buttons: the radio
+          // role promises arrow-key navigation, which this never had.
+          <div className="choice-group" role="group" aria-label="What was wrong with the answer?">
             <button
-              className="feedback-send"
+              type="button"
+              className="btn btn-secondary btn-sm"
+              aria-pressed={verdict === "INCORRECT"}
               disabled={sending}
-              onClick={() => void send(verdict)}
+              onClick={() => setState({ kind: "choosing", verdict: "INCORRECT" })}
+              data-autofocus
             >
-              {sending ? "Sending…" : state.kind === "error" ? "Try again" : "Send"}
+              It&rsquo;s wrong
             </button>
             <button
-              className="feedback-cancel"
+              type="button"
+              className="btn btn-secondary btn-sm"
+              aria-pressed={verdict === "INCOMPLETE"}
               disabled={sending}
-              onClick={() => setState({ kind: "idle" })}
+              onClick={() => setState({ kind: "choosing", verdict: "INCOMPLETE" })}
             >
-              Cancel
+              It&rsquo;s missing something
             </button>
           </div>
+        )}
+
+        <label className="field-label" htmlFor={fieldId}>
+          {variant === "refusal"
+            ? "What’s the answer, and where is it covered? (optional)"
+            : "What should it have said? (optional)"}
+        </label>
+        <textarea
+          id={fieldId}
+          className="textarea"
+          rows={3}
+          maxLength={CORRECTION_MAX}
+          value={correction}
+          disabled={sending}
+          onChange={(e) => setCorrection(e.target.value)}
+          placeholder={
+            variant === "refusal"
+              ? "e.g. The refund policy covers this — it's 30 days."
+              : "e.g. It's 30 days, not 14."
+          }
+          {...(variant === "refusal" ? { "data-autofocus": true } : {})}
+        />
+
+        {state.kind === "error" && (
+          <p className="form-error" role="alert">
+            {state.message}
+          </p>
+        )}
+
+        <div className="form-actions">
+          <button type="button" className="btn btn-primary btn-sm" disabled={sending} onClick={() => void send(verdict)}>
+            {sending ? "Sending…" : state.kind === "error" ? "Try again" : "Send"}
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={sending}
+            onClick={() => setState({ kind: "idle" })}
+          >
+            Cancel
+          </button>
         </div>
-      );
-    }
+      </div>
+    );
   }
 
   const helpfulPending = state.kind === "sending" && state.verdict === "HELPFUL";
@@ -143,87 +172,48 @@ export function FeedbackBar({ traceId, variant }: Props) {
 
   if (variant === "refusal") {
     return (
-      <div className="feedback-bar">
-        <button
-          className="feedback-link"
-          onClick={() => setState({ kind: "choosing", verdict: "INCORRECT" })}
-        >
-          This should have been answered
-        </button>
-      </div>
+      <button
+        ref={openerRef}
+        type="button"
+        className="link-btn muted"
+        onClick={() => setState({ kind: "choosing", verdict: "INCORRECT" })}
+      >
+        This should have been answered
+      </button>
     );
   }
 
   return (
-    <div className="feedback-bar">
-      <span className="feedback-prompt">Was this right?</span>
+    <div className="feedback-bar" role="group" aria-label="Rate this answer">
+      <span className="feedback-prompt" aria-hidden="true">
+        Was this right?
+      </span>
       <button
-        className="feedback-icon"
-        aria-label="Yes, this was helpful"
+        type="button"
+        className="btn btn-ghost btn-icon btn-sm"
+        aria-label="Yes, this answer was right"
         title="Helpful"
         disabled={helpfulPending}
         onClick={() => void send("HELPFUL")}
       >
-        <ThumbIcon />
+        <Icon name="thumb" />
       </button>
       <button
-        className="feedback-icon"
+        ref={openerRef}
+        type="button"
+        className="btn btn-ghost btn-icon btn-sm"
         aria-label="No, something is wrong with this answer"
         title="Not right"
         disabled={helpfulPending}
         onClick={() => setState({ kind: "choosing", verdict: "INCORRECT" })}
       >
-        <ThumbIcon down />
+        <Icon name="thumb" flip />
       </button>
       {helpfulError && (
-        <span className="feedback-error" role="alert">
+        <span className="form-error" role="alert">
           {helpfulError}
         </span>
       )}
     </div>
-  );
-}
-
-function Chip({
-  active,
-  disabled,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  disabled: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      role="radio"
-      aria-checked={active}
-      className={`feedback-chip${active ? " active" : ""}`}
-      disabled={disabled}
-      onClick={onClick}
-    >
-      {children}
-    </button>
-  );
-}
-
-function ThumbIcon({ down = false }: { down?: boolean }) {
-  return (
-    <svg
-      width="15"
-      height="15"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      style={down ? { transform: "rotate(180deg)" } : undefined}
-    >
-      <path d="M7 10v12" />
-      <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" />
-    </svg>
   );
 }

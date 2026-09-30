@@ -1,64 +1,63 @@
-import { useEffect, useRef } from "react";
+import { useId } from "react";
+import { useDialog } from "../lib/useDialog";
 import type { Citation } from "../types";
+import { Icon } from "./Icon";
 
 interface Props {
   citation: Citation | null;
   onClose: () => void;
 }
 
-// Replaces CitationDrawer. Same data (page/filename come from the chunk's own
-// metadata now, not a parsed chunk_id — see backend/app/models/schemas.py
-// Citation), but framed as "evidence" rather than raw source metadata, and
-// the chunk id is demoted to a labelled technical field instead of the
-// footer of every card.
+// The evidence behind one citation. Framed as "evidence" rather than raw
+// source metadata; the chunk id is demoted to a labelled technical field.
 export function SourceDrawer({ citation, onClose }: Props) {
-  const closeRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!citation) return;
-    closeRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [citation, onClose]);
+  const ref = useDialog<HTMLElement>(citation !== null, onClose);
+  const titleId = useId();
 
   if (!citation) return null;
 
   const docName = citation.source_filename || "Source document";
-  const page = citation.page_number != null ? `Page ${citation.page_number}` : null;
+  const where = [citation.page_number != null ? `Page ${citation.page_number}` : null, citation.section_path]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <>
-      <div className="drawer-scrim" onClick={onClose} />
-      <aside className="drawer" role="dialog" aria-modal="true" aria-label="Source evidence">
-        <header>
+      <div className="drawer-scrim" onClick={onClose} aria-hidden="true" />
+      <aside ref={ref} className="drawer" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        <div className="dialog-header">
           <div>
-            <div className="drawer-eyebrow">Source</div>
-            <div className="drawer-doc">{docName}</div>
-            <div className="drawer-path">
-              {[page, citation.section_path].filter(Boolean).join(" · ")}
-            </div>
+            <p className="eyebrow">Source</p>
+            <h2 id={titleId} className="dialog-title">
+              {docName}
+            </h2>
+            {where && <p className="drawer-path">{where}</p>}
           </div>
-          <button ref={closeRef} className="drawer-close" onClick={onClose} aria-label="Close">
-            ×
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon dialog-close"
+            onClick={onClose}
+            aria-label="Close source"
+          >
+            <Icon name="close" size={18} />
           </button>
-        </header>
-        <blockquote className="drawer-quote">{citation.quote}</blockquote>
-        <div className="drawer-verified">
-          <span className="check-dot" aria-hidden />
-          Supports this statement
         </div>
-        <details className="drawer-advanced">
-          <summary>Advanced</summary>
-          <dl>
-            <dt>Chunk ID</dt>
-            <dd>{citation.chunk_id}</dd>
-            <dt>Document ID</dt>
-            <dd>{citation.document_id}</dd>
-          </dl>
-        </details>
+        <div className="dialog-body">
+          <blockquote className="quote">{citation.quote}</blockquote>
+          <p className="quote-note">
+            <Icon name="check" size={14} />
+            This is the passage the answer relies on
+          </p>
+          <details className="details">
+            <summary>Technical details</summary>
+            <dl className="kv">
+              <dt>Chunk ID</dt>
+              <dd className="mono">{citation.chunk_id}</dd>
+              <dt>Document ID</dt>
+              <dd className="mono">{citation.document_id}</dd>
+            </dl>
+          </details>
+        </div>
       </aside>
     </>
   );

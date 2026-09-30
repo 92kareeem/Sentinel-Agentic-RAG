@@ -1,11 +1,13 @@
+import { COMPACT_QUERY, useDialog, useMediaQuery } from "../lib/useDialog";
 import type { DocumentSummary } from "../types";
+import { Icon } from "./Icon";
 
 interface Props {
   documents: DocumentSummary[];
   activeDocId: string | null;
   onSelect: (docId: string | null) => void;
   onUploadClick: () => void;
-  onDelete: (docId: string) => void;
+  onDelete: (doc: DocumentSummary) => void;
   open: boolean;
   onCloseMobile: () => void;
 }
@@ -14,76 +16,123 @@ const STATUS_LABEL: Record<string, string> = {
   UPLOADING: "Uploading…",
   UPLOADED: "Uploaded",
   PROCESSING: "Processing…",
-  INDEXED: "Indexed",
+  INDEXED: "Ready",
   FAILED: "Failed",
   DELETED: "Deleted",
 };
 
-function StatusDot({ status }: { status: string }) {
-  const cls =
-    status === "INDEXED" ? "ok" : status === "FAILED" ? "bad" : status === "DELETED" ? "muted" : "busy";
-  return <span className={`doc-status-dot ${cls}`} aria-hidden />;
+function statusTone(status: string): string {
+  if (status === "INDEXED") return "ok";
+  if (status === "FAILED") return "bad";
+  return "busy";
 }
 
 export function Sidebar({ documents, activeDocId, onSelect, onUploadClick, onDelete, open, onCloseMobile }: Props) {
+  const compact = useMediaQuery(COMPACT_QUERY);
+  // On a phone the sidebar covers the page, so it has to behave like any
+  // other overlay: focus in, Tab stays inside, Escape closes, focus back to
+  // the menu button. On a wide screen it is just part of the page.
+  const ref = useDialog<HTMLElement>(compact && open, onCloseMobile);
   const visible = documents.filter((d) => d.status !== "DELETED");
 
   return (
     <>
-      {open && <div className="sidebar-scrim" onClick={onCloseMobile} />}
-      <nav className={`sidebar ${open ? "open" : ""}`} aria-label="Documents">
-        <div className="sidebar-header">
-          <span className="sidebar-title">Documents</span>
-          <button className="mobile-close" onClick={onCloseMobile} aria-label="Close sidebar">×</button>
+      {compact && open && <div className="sidebar-scrim" onClick={onCloseMobile} aria-hidden="true" />}
+      <nav
+        ref={ref}
+        id="documents-panel"
+        className={`sidebar${open ? " is-open" : ""}`}
+        aria-labelledby="documents-heading"
+        {...(compact && open ? { role: "dialog", "aria-modal": true } : {})}
+      >
+        <div className="sidebar-head">
+          <h2 id="documents-heading" className="sidebar-title">
+            Documents{visible.length > 0 ? ` · ${visible.length}` : ""}
+          </h2>
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon btn-sm compact-only"
+            onClick={onCloseMobile}
+            aria-label="Close documents"
+          >
+            <Icon name="close" />
+          </button>
         </div>
 
-        <button className="upload-cta" onClick={onUploadClick}>
-          + Upload document
+        <button type="button" className="nav-row nav-upload" onClick={onUploadClick}>
+          <Icon name="plus" />
+          <span>Upload document</span>
         </button>
 
         <button
-          className={`doc-item scope-all ${activeDocId === null ? "active" : ""}`}
+          type="button"
+          className="nav-row"
           onClick={() => onSelect(null)}
+          aria-current={activeDocId === null ? "true" : undefined}
         >
-          <span className="doc-icon" aria-hidden>◎</span>
-          <span className="doc-info">
-            <span className="doc-name">All documents</span>
-            <span className="doc-sub">Search everything you've uploaded</span>
+          <Icon name="layers" />
+          <span className="nav-text">
+            <span className="nav-title">All documents</span>
+            <span className="nav-sub">Search everything at once</span>
           </span>
         </button>
 
-        {visible.length === 0 && (
-          <div className="sidebar-empty">No documents yet. Upload one to get started.</div>
+        {visible.length === 0 ? (
+          <p className="sidebar-note">No documents yet. Upload one to get started.</p>
+        ) : (
+          <ul className="doc-list">
+            {visible.map((doc) => {
+              const status = STATUS_LABEL[doc.status] ?? doc.status;
+              const pages =
+                doc.status === "INDEXED" && doc.page_count
+                  ? ` · ${doc.page_count} page${doc.page_count === 1 ? "" : "s"}`
+                  : "";
+              return (
+                <li key={doc.document_id} className="doc-row">
+                  {/* Only a ready document can be asked about: the server
+                      answers 409 for anything still processing or failed, so
+                      offering to select one only set up an error. The row
+                      still says what state it is in, and can be deleted. */}
+                  <button
+                    type="button"
+                    className="nav-row"
+                    // aria-disabled, not disabled: a disabled button leaves the
+                    // Tab order, and a keyboard user would never reach the row
+                    // to hear WHY the document failed.
+                    onClick={() => doc.status === "INDEXED" && onSelect(doc.document_id)}
+                    aria-disabled={doc.status !== "INDEXED" || undefined}
+                    aria-current={activeDocId === doc.document_id ? "true" : undefined}
+                    title={doc.status === "INDEXED" ? `Ask only about ${doc.filename}` : doc.filename}
+                  >
+                    <Icon name="file" />
+                    <span className="nav-text">
+                      <span className="nav-title">{doc.filename}</span>
+                      {/* Status is spelled out, never carried by the dot's
+                          colour alone. */}
+                      <span className="nav-sub">
+                        <span className={`status-dot ${statusTone(doc.status)}`} aria-hidden="true" />
+                        {status}
+                        {pages}
+                      </span>
+                      {doc.status === "FAILED" && doc.error_message && (
+                        <span className="nav-error">{doc.error_message}</span>
+                      )}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-icon btn-sm btn-danger doc-delete"
+                    onClick={() => onDelete(doc)}
+                    aria-label={`Delete ${doc.filename}`}
+                    title="Delete document"
+                  >
+                    <Icon name="trash" />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         )}
-
-        <div className="doc-list">
-          {visible.map((doc) => (
-            <div key={doc.document_id} className={`doc-item ${activeDocId === doc.document_id ? "active" : ""}`}>
-              <button className="doc-item-main" onClick={() => onSelect(doc.document_id)}>
-                <span className="doc-icon" aria-hidden>📄</span>
-                <span className="doc-info">
-                  <span className="doc-name" title={doc.filename}>{doc.filename}</span>
-                  <span className="doc-sub">
-                    <StatusDot status={doc.status} />
-                    {STATUS_LABEL[doc.status] ?? doc.status}
-                    {doc.status === "INDEXED" && doc.page_count ? ` · ${doc.page_count} page${doc.page_count === 1 ? "" : "s"}` : ""}
-                  </span>
-                  {doc.status === "FAILED" && doc.error_message && (
-                    <span className="doc-error">{doc.error_message}</span>
-                  )}
-                </span>
-              </button>
-              <button
-                className="doc-delete"
-                onClick={() => onDelete(doc.document_id)}
-                aria-label={`Delete ${doc.filename}`}
-                title="Delete document"
-              >
-                🗑
-              </button>
-            </div>
-          ))}
-        </div>
       </nav>
     </>
   );
