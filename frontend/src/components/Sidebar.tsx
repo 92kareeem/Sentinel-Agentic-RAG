@@ -89,12 +89,20 @@ export function Sidebar({ documents, activeDocId, onSelect, onUploadClick, onDel
                   : "";
               return (
                 <li key={doc.document_id} className="doc-row">
+                  {/* Only a ready document can be asked about: the server
+                      answers 409 for anything still processing or failed, so
+                      offering to select one only set up an error. The row
+                      still says what state it is in, and can be deleted. */}
                   <button
                     type="button"
                     className="nav-row"
-                    onClick={() => onSelect(doc.document_id)}
+                    // aria-disabled, not disabled: a disabled button leaves the
+                    // Tab order, and a keyboard user would never reach the row
+                    // to hear WHY the document failed.
+                    onClick={() => doc.status === "INDEXED" && onSelect(doc.document_id)}
+                    aria-disabled={doc.status !== "INDEXED" || undefined}
                     aria-current={activeDocId === doc.document_id ? "true" : undefined}
-                    title={doc.filename}
+                    title={doc.status === "INDEXED" ? `Ask only about ${doc.filename}` : doc.filename}
                   >
                     <Icon name="file" />
                     <span className="nav-text">

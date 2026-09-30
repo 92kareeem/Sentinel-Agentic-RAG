@@ -423,7 +423,9 @@ button:disabled {
 .nav-row {
   display: grid;
   grid-template-columns: 1.25rem minmax(0, 1fr);
-  align-items: center;
+  /* Icons sit on the TITLE line, not the middle of the row: a failed upload
+     carries a three-line error, and a centred icon drifted down beside it. */
+  align-items: start;
   column-gap: var(--s-3);
   width: 100%;
   min-height: 2.75rem;
@@ -439,6 +441,14 @@ button:disabled {
 }
 .nav-row .icon {
   color: var(--text-muted);
+  /* (line height 1.6 x 0.875rem - 16px icon) / 2: centred on the first line */
+  margin-top: 0.2rem;
+}
+.nav-row[aria-disabled="true"] {
+  cursor: default;
+}
+.nav-row[aria-disabled="true"]:hover {
+  background: transparent;
 }
 .nav-row[aria-current="true"] {
   background: var(--accent-soft);
