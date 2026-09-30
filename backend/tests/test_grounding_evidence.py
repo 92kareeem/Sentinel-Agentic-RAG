@@ -179,3 +179,216 @@ def test_the_refusal_sentinel_is_never_treated_as_an_ungrounded_answer() -> None
 
     assert result.ok
     assert result.valid_chunk_ids == []
+
+
+# ------------------------------------------ several passages cited at once
+#
+# Found in manual testing: "What is this document about?" — one of the example
+# questions the UI itself suggests — was refused every time. The model wrote a
+# correct summary and cited it the natural way, all tags stacked at the end:
+#
+#     "...one paragraph of four sentences... [chunk:a] [chunk:b] [chunk:c]"
+#
+# The gate paired the paragraph with [a] alone and [b], [c] with EMPTY
+# sentences, stripped all of them, and refused an answer the LLM critic had
+# rated fully faithful.
+
+VENDOR = _chunk(
+    "vendor",
+    "The service helps banks compare document extraction vendors before procurement.",
+    section="Case study > Problem",
+)
+PILOT = _chunk(
+    "pilot",
+    "The recommended pilot runs for 90 days on a single document type.",
+    section="Case study > Plan",
+)
+TRUST = _chunk(
+    "trust",
+    "Buyers look for ISO 27001 certification and SOC 2 reports as trust signals.",
+    section="Case study > Trust",
+)
+SUMMARY_CHUNKS = [VENDOR, PILOT, TRUST]
+STACKED = " [chunk:vendor] [chunk:pilot] [chunk:trust]"
+
+
+def test_a_summary_citing_several_passages_at_once_is_kept() -> None:
+    answer = (
+        "The case study describes a service that helps banks compare document extraction "
+        "vendors before procurement. It recommends a pilot of 90 days on a single document "
+        "type. Buyers look for ISO 27001 certification and SOC 2 reports." + STACKED
+    )
+
+    r = grounding.verify(answer, SUMMARY_CHUNKS, question="what is this document about")
+
+    assert r.ok
+    assert r.stripped_ratio == 0.0
+    assert set(r.valid_chunk_ids) == {"vendor", "pilot", "trust"}
+
+
+def test_each_sentence_keeps_only_the_passages_that_bear_on_it() -> None:
+    """A reader clicking the citation after "90 days" should land on the plan,
+    not on a list of every passage the paragraph drew from."""
+    answer = (
+        "It recommends a pilot of 90 days on a single document type. "
+        "Buyers look for ISO 27001 certification." + STACKED
+    )
+
+    r = grounding.verify(answer, SUMMARY_CHUNKS)
+
+    assert "90 days on a single document type [chunk:pilot]" in r.clean_answer
+    assert "ISO 27001 certification [chunk:trust]" in r.clean_answer
+    assert "[chunk:vendor]" not in r.clean_answer
+
+
+def test_an_invented_sentence_cannot_hide_inside_a_cited_paragraph() -> None:
+    """The reason each sentence is still checked separately: scoring the whole
+    paragraph as one claim would let this fabrication ride along, diluted by
+    three true neighbours."""
+    answer = (
+        "The service helps banks compare document extraction vendors. "
+        "The recommended pilot runs for 90 days. "
+        "The company was founded in Lisbon in 2011 by a former central banker. "
+        "Buyers look for ISO 27001 certification." + STACKED
+    )
+
+    r = grounding.verify(answer, SUMMARY_CHUNKS)
+
+    assert r.ok  # one of four stripped — below the refusal threshold
+    assert r.stripped_ratio == 0.25
+    assert "Lisbon" not in r.clean_answer
+    assert "2011" not in r.clean_answer
+
+
+def test_a_figure_none_of_the_cited_passages_contain_is_still_stripped() -> None:
+    """Group support widens WHERE a figure may come from to every passage the
+    sentence cites — never to passages it does not."""
+    answer = "The recommended pilot runs for 120 days on a single document type." + STACKED
+
+    r = grounding.verify(answer, SUMMARY_CHUNKS)
+
+    assert not r.ok
+    assert "120" not in r.clean_answer
+
+
+def test_a_fabricated_tag_in_a_group_is_ignored_not_trusted() -> None:
+    answer = "The recommended pilot runs for 90 days. [chunk:pilot] [chunk:made-up-id]"
+
+    r = grounding.verify(answer, SUMMARY_CHUNKS)
+
+    assert r.ok
+    assert r.valid_chunk_ids == ["pilot"]
+    assert "made-up-id" not in r.clean_answer
+
+
+def test_a_short_fragment_is_not_scored_as_its_own_sentence() -> None:
+    """ "No." split off by the sentence pattern is part of the claim that
+    follows, not a separate one-word claim to strip."""
+    answer = "No. Customers may request a refund within 30 days of purchase [chunk:refunds]."
+
+    r = grounding.verify(answer, [REFUNDS])
+
+    assert r.ok
+    assert r.stripped_ratio == 0.0
+
+
+# ------------------------------------------ list-style answers
+#
+# Also found in manual testing, on "What are the main policies or requirements
+# described here?" (another of the UI's suggested questions): the critic rated
+# the answer 0.9, grounding stripped 57% of it. Two causes, both below.
+
+TABLE = _chunk(
+    "casestudy_p0_s27_c0",
+    "Risks include a long sales cycle, procurement delay and security rejection, "
+    "each with a practical mitigation.",
+    section="Case study > Risks",
+)
+
+
+def test_a_chunk_id_quoted_in_prose_is_not_read_as_a_numeric_claim() -> None:
+    """ "The table in chunk casestudy_p0_s27_c0 lists..." — the model wrote the
+    id into the sentence. Its digits (0, 27) were read as figures the evidence
+    had to contain, and a sentence with 80% word overlap was stripped."""
+    answer = (
+        "The table in chunk casestudy_p0_s27_c0 lists risks such as a long sales cycle, "
+        "procurement delay and security rejection. [chunk:casestudy_p0_s27_c0]"
+    )
+
+    r = grounding.verify(answer, [TABLE])
+
+    assert r.ok
+    assert r.stripped_ratio == 0.0
+
+
+def test_a_chunk_id_never_reaches_the_reader() -> None:
+    """A 40-character hash in the middle of an answer means nothing to the
+    person reading it; the citation chip is how they reach the source."""
+    answer = (
+        "Risks include procurement delay and security rejection "
+        "(chunks casestudy_p0_s27_c0, _c1). [chunk:casestudy_p0_s27_c0]"
+    )
+
+    r = grounding.verify(answer, [TABLE])
+
+    # The sentence must SURVIVE, cleaned. Asserting only that the id is absent
+    # would pass just as well if the whole sentence were stripped — which is
+    # exactly what happened before this fix.
+    assert r.ok
+    prose = r.clean_answer.split("[chunk:")[0]
+    assert "procurement delay and security rejection" in prose
+    assert "casestudy" not in prose
+    assert "_c1" not in prose
+    assert "()" not in prose
+
+
+def test_a_list_lead_in_is_not_counted_as_a_claim() -> None:
+    """ "The main ones are:" asserts nothing; it introduces what follows.
+    Counting it as an unsupported claim penalised every list-style answer."""
+    answer = (
+        "The main ones are:\n"
+        "1. Customers may request a refund within 30 days of purchase [chunk:refunds].\n"
+        "2. Refund requests above 500 USD require manager approval [chunk:approvals]."
+    )
+
+    r = grounding.verify(answer, [REFUNDS, APPROVALS])
+
+    assert r.ok
+    assert r.stripped_ratio == 0.0
+
+
+def test_an_answer_that_is_only_a_lead_in_fails_closed() -> None:
+    """No claim at all is not a grounded answer — and must not divide by zero."""
+    r = grounding.verify("The main ones are: [chunk:refunds]", [REFUNDS])
+
+    assert not r.ok
+    assert r.stripped_ratio == 1.0
+
+
+# ------------------------------------------ citation shapes the model emits
+#
+# gpt-oss (especially 120b) often writes OpenAI's native 【chunk:id】 instead of
+# [chunk:id]. Unrecognised, a correct and fully cited answer read as uncited
+# and was refused: 4 of 5 runs of a golden question the router sends to 120b.
+
+
+def test_lenticular_brackets_are_read_as_citations() -> None:
+    answer = "Customers may request a refund within 30 days of purchase【chunk:refunds】"
+
+    r = grounding.verify(answer, [REFUNDS])
+
+    assert r.ok
+    assert r.valid_chunk_ids == ["refunds"]
+    assert "【" not in r.clean_answer
+
+
+def test_padded_and_fullwidth_citations_are_normalised() -> None:
+    assert grounding.normalize_citations("a [ chunk: refunds ] b") == "a [chunk:refunds] b"
+    assert grounding.normalize_citations("a ［chunk:refunds］ b") == "a [chunk:refunds] b"
+    assert grounding.normalize_citations("a [chunk:refunds] b") == "a [chunk:refunds] b"
+
+
+def test_normalising_does_not_invent_citations() -> None:
+    """Only the chunk: form is rewritten; ordinary bracketed text is left alone."""
+    text = "See section [3] and 【note】 for details."
+    assert grounding.normalize_citations(text) == text
