@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Icon } from "./Icon";
 
 type Theme = "light" | "dark";
 
@@ -7,14 +8,17 @@ function getInitialTheme(): Theme {
     const saved = localStorage.getItem("sentinel-theme");
     if (saved === "light" || saved === "dark") return saved;
   } catch {
-    // localStorage unavailable (private mode, etc.) — fall through to default.
+    // localStorage unavailable (private mode, etc.) — fall through.
   }
-  return "dark";
+  // No saved choice: follow the operating system rather than forcing dark on
+  // someone whose whole machine is set to light.
+  return typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: light)").matches
+    ? "light"
+    : "dark";
 }
 
-// Manual light/dark toggle rather than only following prefers-color-scheme:
-// this is a product decision (brief explicitly asked for a switch), and
-// persists per-browser so returning stakeholders keep their choice.
+// Manual light/dark switch (a product decision — the brief asked for one),
+// persisted per browser so returning users keep their choice.
 export function ThemeToggle() {
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
 
@@ -23,18 +27,20 @@ export function ThemeToggle() {
     try {
       localStorage.setItem("sentinel-theme", theme);
     } catch {
-      // Non-fatal — theme just won't persist across reloads.
+      // Non-fatal — the theme just won't persist across reloads.
     }
   }, [theme]);
 
+  const next = theme === "dark" ? "light" : "dark";
   return (
     <button
-      className="theme-toggle"
-      onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-      aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-      title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+      type="button"
+      className="btn btn-secondary btn-icon"
+      onClick={() => setTheme(next)}
+      aria-label={`Switch to ${next} theme`}
+      title={`Switch to ${next} theme`}
     >
-      {theme === "dark" ? "☀" : "☾"}
+      <Icon name={theme === "dark" ? "sun" : "moon"} />
     </button>
   );
 }
