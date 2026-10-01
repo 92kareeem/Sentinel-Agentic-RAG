@@ -10,8 +10,21 @@ dependencies = [
     "pydantic-settings~=2.6",
     "httpx~=0.27",
     "boto3~=1.35",
-    "langgraph~=0.2",
-    "sentence-transformers~=3.3",   # pulls torch; CPU wheels forced in Dockerfile.lambda
+    # >=1.0.10: unsafe msgpack deserialization when loading checkpoints
+    # (GHSA via Dependabot #14). ~=0.2 capped us below every fixed release.
+    "langgraph>=1.0.10,<2",
+    # Security floors for langgraph's own dependencies, which a langgraph
+    # upgrade alone does not guarantee: unsafe JSON/BaseCache
+    # deserialization (#13, #17) and unsafe URL path construction (#18).
+    "langgraph-checkpoint>=4.1.1",
+    "langgraph-sdk>=0.3.15",
+    # Pulls torch (CPU wheels forced in Dockerfile.lambda). 3.x pinned
+    # transformers <5, and transformers <5.10 has four advisories including
+    # remote code execution at model load and a save_pretrained path
+    # traversal (#15, #19, #20, #22). Local ingestion only: the Lambda image
+    # does not ship transformers at all (see docker/requirements-lambda.txt).
+    "sentence-transformers>=6.1,<7",
+    "transformers>=5.10.0",
     "faiss-cpu~=1.9",
     "rank-bm25~=0.2.2",
     "pymupdf~=1.24",
@@ -21,8 +34,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest~=8.3",
+    "pytest>=9.0.3,<10",  # <9.0.3: vulnerable tmpdir handling (#16)
     "moto[dynamodb]~=5.0",
+    # moto's only path to cryptography; 44-49 has a Bleichenbacher oracle in
+    # PKCS#7 EnvelopedData decryption (#21). Test-only, never deployed.
+    "cryptography>=50.0.0",
     "ruff~=0.8",
     "mypy~=1.13",
     "uvicorn~=0.32",
