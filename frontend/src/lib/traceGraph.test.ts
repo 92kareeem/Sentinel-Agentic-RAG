@@ -42,7 +42,7 @@ describe("buildLanes", () => {
     expect(lanes[1].repair?.label).toBe("Escalate");
     expect(lanes[0].nodes[4].tone).toBe("bad");
     expect(lanes[0].nodes[4].detail).toBe("rejected · 100% stripped");
-    expect(lanes[2].nodes.at(-1)?.tone).toBe("bad");
+    expect(lanes[2].nodes[lanes[2].nodes.length - 1].tone).toBe("bad");
   });
 
   it("reports access exclusions on the retriever", () => {
