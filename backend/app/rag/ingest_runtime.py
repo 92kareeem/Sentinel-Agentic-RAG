@@ -27,7 +27,7 @@ import numpy as np
 
 from app.config import get_settings
 from app.documents import registry
-from app.models.schemas import Chunk, DocumentErrorCode, DocumentStatus
+from app.models.schemas import Chunk, ClassificationLevel, DocumentErrorCode, DocumentStatus
 from app.rag import bm25_store, embeddings, index_store
 from app.rag.chunking import chunk_file
 from app.rag.index_lock import index_publication_lock
@@ -146,10 +146,13 @@ def ingest_document(
     left claiming PROCESSING after the request ends.
     """
     settings = get_settings()
-    registry.update_status(document_id, owner_id, DocumentStatus.PROCESSING)
+    record = registry.update_status(document_id, owner_id, DocumentStatus.PROCESSING)
 
     try:
         try:
+            # Access metadata and the checksum come from the registry record,
+            # never from the caller: the record is the identity, and a chunk
+            # that disagreed with it about who may read it would be a leak.
             chunks = chunk_file(
                 local_path,
                 embeddings.token_offsets,
@@ -159,6 +162,12 @@ def ingest_document(
                 owner_id=owner_id,
                 source_filename=source_filename,
                 max_chunks=settings.max_chunks_per_document,
+                tenant_id=record.tenant_id if record else "",
+                allowed_roles=record.allowed_roles if record else (),
+                classification=(
+                    record.classification if record else ClassificationLevel.INTERNAL
+                ),
+                document_checksum=record.checksum_sha256 if record else "",
             )
         except PdfExtractionError as exc:
             registry.update_status(

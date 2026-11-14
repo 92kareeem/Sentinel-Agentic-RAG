@@ -77,6 +77,47 @@ class DocumentErrorCode(StrEnum):
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
 
+class ClassificationLevel(StrEnum):
+    """How sensitive a document is, as an ordered ladder.
+
+    A caller sees a chunk only when their clearance is at least the chunk's
+    level. Ordered so the comparison is one integer test rather than a table
+    of pairs that drifts when a level is added.
+    """
+
+    PUBLIC = "PUBLIC"
+    INTERNAL = "INTERNAL"
+    CONFIDENTIAL = "CONFIDENTIAL"
+    RESTRICTED = "RESTRICTED"
+
+    @property
+    def rank(self) -> int:
+        return _CLASSIFICATION_RANK[self]
+
+
+_CLASSIFICATION_RANK: dict[ClassificationLevel, int] = {
+    ClassificationLevel.PUBLIC: 0,
+    ClassificationLevel.INTERNAL: 1,
+    ClassificationLevel.CONFIDENTIAL: 2,
+    ClassificationLevel.RESTRICTED: 3,
+}
+
+
+class AccessContext(BaseModel):
+    """Who is asking, resolved once at the API edge and carried into the graph.
+
+    Every authorization decision — which documents list, which chunks may be
+    scored, which trace may be read — is a pure function of this object and
+    the resource. Nothing downstream re-reads the user table.
+    """
+
+    user_id: str
+    tenant_id: str = ""
+    roles: list[str] = Field(default_factory=list)
+    clearance: ClassificationLevel = ClassificationLevel.INTERNAL
+    is_admin: bool = False
+
+
 class DocumentRecord(BaseModel):
     """Canonical document identity and lifecycle state.
 
@@ -87,6 +128,12 @@ class DocumentRecord(BaseModel):
 
     document_id: str
     owner_id: str
+    # Access control. An empty allowed_roles means owner-only, which is what
+    # every document uploaded before roles existed should mean. A tenant
+    # admin sees every document in the tenant regardless.
+    tenant_id: str = ""
+    allowed_roles: list[str] = Field(default_factory=list)
+    classification: ClassificationLevel = ClassificationLevel.INTERNAL
     original_filename: str
     safe_filename: str
     content_type: str
@@ -119,13 +166,23 @@ class DocumentSummary(BaseModel):
     updated_at: str
     error_code: DocumentErrorCode | None = None
     error_message: str | None = None
+    classification: ClassificationLevel = ClassificationLevel.INTERNAL
+    allowed_roles: list[str] = Field(default_factory=list)
+    # True when the caller uploaded it; false for a document shared into the
+    # tenant by someone else. The UI uses it to decide who may delete.
+    owned_by_caller: bool = True
 
     @classmethod
-    def from_record(cls, record: DocumentRecord) -> "DocumentSummary":
+    def from_record(
+        cls, record: DocumentRecord, *, viewer_id: str | None = None
+    ) -> "DocumentSummary":
         return cls(
             document_id=record.document_id,
             filename=record.original_filename,
             status=record.status,
+            classification=record.classification,
+            allowed_roles=list(record.allowed_roles),
+            owned_by_caller=viewer_id is None or record.owner_id == viewer_id,
             file_size=record.file_size,
             page_count=record.page_count,
             chunk_count=record.chunk_count,
@@ -152,6 +209,16 @@ class Chunk(BaseModel):
     chunk_id: str  # deterministic: "{doc_id}_p{page}_s{section_idx}_c{chunk_idx}"
     doc_id: str  # == DocumentRecord.document_id (server-generated, never a filename)
     owner_id: str = ""  # denormalized for retrieval-time tenant filtering
+    # Denormalized from the document so access filtering never needs a
+    # registry read inside retrieval. An empty tenant_id is the seeded demo
+    # corpus, visible to every tenant.
+    tenant_id: str = ""
+    allowed_roles: list[str] = Field(default_factory=list)
+    classification: ClassificationLevel = ClassificationLevel.PUBLIC
+    # sha256 over (document checksum, char_start, char_end, text): a client
+    # holding the chunk can recompute it and prove the quote is the exact
+    # span of the exact file. See rag/chunking.provenance_hash.
+    provenance_hash: str = ""
     section_path: str  # e.g. "Item 7 > Liquidity"
     text: str
     is_table: bool = False
@@ -175,6 +242,34 @@ class Citation(BaseModel):
     page_number: int | None = None
     source_filename: str = ""
     document_id: str = ""
+    provenance_hash: str = ""
+    char_start: int | None = None
+    char_end: int | None = None
+
+
+class ChunkDetail(BaseModel):
+    """One chunk in full, with everything needed to verify its provenance.
+
+    Served by GET /v1/documents/{id}/chunks/{chunk_id}, authorized with the
+    same visibility rule retrieval uses. The hash recipe is stated in the
+    response so a client never has to read server code to check it.
+    """
+
+    chunk_id: str
+    document_id: str
+    source_filename: str
+    section_path: str
+    page_number: int | None
+    char_start: int
+    char_end: int
+    text: str
+    provenance_hash: str
+    document_checksum_sha256: str
+    hash_recipe: str = (
+        "sha256(utf8(document_checksum_sha256 + '|' + char_start + '|' + char_end"
+        " + '|' + text))"
+    )
+    classification: ClassificationLevel
 
 
 # ---------------------------------------------------------------- /v1/query

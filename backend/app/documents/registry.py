@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
-from app.models.schemas import DocumentErrorCode, DocumentRecord, DocumentStatus
+from app.models.schemas import AccessContext, DocumentErrorCode, DocumentRecord, DocumentStatus
 
 _LOCAL_FILE = "documents.json"
 
@@ -198,6 +198,62 @@ def list_for_owner(owner_id: str) -> list[DocumentRecord]:
 
     records = [_expire_if_abandoned(r) for r in records if r.status != DocumentStatus.DELETED]
     return sorted(records, key=lambda r: r.created_at, reverse=True)
+
+
+def list_for_tenant(tenant_id: str) -> list[DocumentRecord]:
+    """Every non-deleted document in one tenant, newest first.
+
+    Local mode filters the registry file. AWS mode is a filtered Scan: the
+    table is keyed by owner for the two hot paths (list mine, fetch mine), and
+    a tenant-wide listing is an admin-and-sharing path that runs rarely over a
+    table sized in the hundreds. A GSI would be the right call at volume and
+    is deliberately not provisioned on the free tier until that volume exists.
+    """
+    if not tenant_id:
+        return []
+    if get_settings().local_mode:
+        with _local_lock:
+            raw = _local_read_all()
+        records = [DocumentRecord(**v) for v in raw.values()]
+        records = [r for r in records if r.tenant_id == tenant_id]
+    else:
+        from boto3.dynamodb.conditions import Attr
+
+        resp = _table().scan(FilterExpression=Attr("tenant_id").eq(tenant_id))
+        records = [
+            DocumentRecord(**{k: v for k, v in item.items() if k not in ("pk", "sk")})
+            for item in resp.get("Items", [])
+        ]
+    records = [_expire_if_abandoned(r) for r in records if r.status != DocumentStatus.DELETED]
+    return sorted(records, key=lambda r: r.created_at, reverse=True)
+
+
+def find_visible(document_id: str, ctx: AccessContext) -> DocumentRecord | None:
+    """One document the caller may see, or None (absent and forbidden alike).
+
+    Tries the caller's own partition first, which is the common case and a
+    single key read; falls back to the tenant listing for documents shared in
+    by role. Visibility itself is decided by guardrails/access, nowhere else.
+    """
+    from app.guardrails import access
+
+    record = get(document_id, owner_id=ctx.user_id)
+    if record is None and ctx.tenant_id:
+        record = next(
+            (r for r in list_for_tenant(ctx.tenant_id) if r.document_id == document_id), None
+        )
+    return record if access.document_visible(ctx, record) else None
+
+
+def list_visible(ctx: AccessContext) -> list[DocumentRecord]:
+    """Documents the caller owns plus those shared with them in the tenant."""
+    from app.guardrails import access
+
+    mine = {r.document_id: r for r in list_for_owner(ctx.user_id)}
+    for r in list_for_tenant(ctx.tenant_id):
+        if r.document_id not in mine and access.document_visible(ctx, r):
+            mine[r.document_id] = r
+    return sorted(mine.values(), key=lambda r: r.created_at, reverse=True)
 
 
 def update_status(

@@ -106,6 +106,9 @@ def citations_for(chunk_ids: Iterable[str], chunks: list[Chunk]) -> list[Citatio
             page_number=getattr(by_id[cid], "page_number", None),
             source_filename=getattr(by_id[cid], "source_filename", ""),
             document_id=by_id[cid].doc_id,
+            provenance_hash=by_id[cid].provenance_hash,
+            char_start=by_id[cid].char_start,
+            char_end=by_id[cid].char_end,
         )
         for cid in seen
     ]

@@ -9,13 +9,14 @@ never in Lambda. Full rebuild each run + deterministic chunk ids = idempotent.
 """
 
 import argparse
+import hashlib
 import re
 import sys
 import time
 from pathlib import Path
 
 from app.config import get_settings
-from app.models.schemas import Chunk
+from app.models.schemas import Chunk, ClassificationLevel
 from app.rag import bm25_store, embeddings, index_store
 from app.rag.pdf import PdfExtractionError
 
@@ -62,6 +63,8 @@ def ingest_folder(folder: Path) -> None:
                 owner_id="",  # shared corpus: visible to all callers
                 source_filename=path.name,
                 max_chunks=s.max_chunks_per_document,
+                classification=ClassificationLevel.PUBLIC,
+                document_checksum=hashlib.sha256(path.read_bytes()).hexdigest(),
             )
         except PdfExtractionError as exc:
             # One unreadable file must not abort a corpus rebuild.
@@ -121,7 +124,7 @@ def smoke(query: str) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Build or smoke-test the Sentinel index")
-    ap.add_argument("folder", nargs="?", default="./docs", help="docs folder to ingest")
+    ap.add_argument("folder", nargs="?", default="./corpus", help="business documents to index")
     ap.add_argument("--smoke-only", metavar="QUERY", help="skip build; query existing index")
     args = ap.parse_args()
 

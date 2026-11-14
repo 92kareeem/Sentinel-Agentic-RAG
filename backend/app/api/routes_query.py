@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.agents.graph import build_graph
 from app.agents.state import AgentState
 from app.config import get_settings
-from app.guardrails import cost_governor, injection, input_validation, pii, quota
+from app.guardrails import access, cost_governor, injection, input_validation, pii, quota
 from app.guardrails.auth import resolve_user
 from app.learning import casebook
 from app.llm.base import CircuitOpenError
@@ -130,16 +130,18 @@ def query(
     quota.check_quota(user)                                 # 5. 429
     budget = cost_governor.allocate_budget()                # 6. hard caps
 
+    ctx = access.context_for(user)
+
     # 7. document scope authorization. A doc_id is a client-supplied string;
     # without this check a caller could scope a query to another tenant's
     # document id and read its content back through the answer. Retrieval also
-    # filters by owner (defense in depth), but the request is rejected here so
-    # the caller gets a clear 404 rather than a confusing empty refusal.
+    # filters before scoring (defense in depth), but the request is rejected
+    # here so the caller gets a clear 404 rather than a confusing empty refusal.
     if req.doc_id is not None:
         from app.documents import registry
         from app.models.schemas import DocumentStatus
 
-        record = registry.get(req.doc_id, owner_id=str(user["user_id"]))
+        record = registry.find_visible(req.doc_id, ctx)
         if record is None:
             raise HTTPException(status_code=404, detail="document not found")
         if record.status != DocumentStatus.INDEXED:
@@ -149,7 +151,9 @@ def query(
             )
 
     settings = get_settings()
-    trace = TraceRecorder(user_id=str(user["user_id"]), query_redacted=scrubbed)
+    trace = TraceRecorder(
+        user_id=ctx.user_id, tenant_id=ctx.tenant_id, query_redacted=scrubbed
+    )
     history = [
         {"role": turn.role, "content": turn.content}
         for turn in req.conversation_history
@@ -159,7 +163,8 @@ def query(
         # Retrieval starts from the user's own wording; repair_rewrite may
         # replace this, but never `query`.
         "search_query": scrubbed,
-        "user_id": str(user["user_id"]),
+        "user_id": ctx.user_id,
+        "access": ctx,
         "doc_id": req.doc_id,
         "trace": trace,
         "attempt": 0,

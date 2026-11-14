@@ -7,7 +7,7 @@ graph diffs/merges state between node invocations.
 
 from typing import Literal, NotRequired, TypedDict
 
-from app.models.schemas import Chunk, Citation, CriticScores, RefusalReason
+from app.models.schemas import AccessContext, Chunk, Citation, CriticScores, RefusalReason
 
 # Imported eagerly, not under TYPE_CHECKING: LangGraph resolves this
 # TypedDict's annotations at runtime to build its state schema, so a string
@@ -35,6 +35,10 @@ class AgentState(TypedDict):
     # about it looks wrong.
     search_query: str
     user_id: str
+    # Who is asking, fully resolved (tenant, roles, clearance). Optional only
+    # so the eval harness and scripts can keep building state with a bare
+    # user_id; retrieval then falls back to an owner-only context.
+    access: NotRequired[AccessContext]
     doc_id: str | None  # scope retrieval to one uploaded document; None = whole index
     trace: TraceRecorder
     attempt: int

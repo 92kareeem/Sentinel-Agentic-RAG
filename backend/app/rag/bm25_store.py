@@ -8,6 +8,7 @@ share no scale, ranks do.
 
 import pickle
 import re
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -53,10 +54,18 @@ def load(index_dir: Path) -> Any:
         return pickle.load(f)  # noqa: S301 - artifact is built by us, not user input
 
 
-def search(bm25: Any, query: str, k: int) -> list[tuple[int, float]]:
-    """Return [(row, score)] best-first; rows align with build() corpus order."""
+def search(
+    bm25: Any, query: str, k: int, *, allowed_rows: Collection[int] | None = None
+) -> list[tuple[int, float]]:
+    """Return [(row, score)] best-first; rows align with build() corpus order.
+
+    rank_bm25 scores the whole corpus in one vectorised pass, so exclusion is
+    a mask over the candidate rows before ranking rather than a selector
+    inside scoring. Either way an excluded row cannot appear in the result.
+    """
     scores = bm25.get_scores(tokenize(query))
-    best = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:k]
+    candidates = range(len(scores)) if allowed_rows is None else sorted(allowed_rows)
+    best = sorted(candidates, key=lambda i: scores[i], reverse=True)[:k]
     return [(i, float(scores[i])) for i in best]
 
 
