@@ -10,7 +10,7 @@ import re
 import time
 from collections.abc import Iterable
 
-from app.agents.budget import check_budget, llm_call
+from app.agents.budget import check_budget, llm_call, pick_model
 from app.agents.state import AgentState
 from app.guardrails.grounding import normalize_citations
 from app.models.schemas import Chunk, Citation
@@ -123,9 +123,14 @@ def synthesizer_node(state: AgentState) -> AgentState:
         return state
 
     t0 = time.perf_counter()
+    # The router or escalation chose state["model"] on quality grounds; the
+    # budget rule may still swap in the cheap model when time or tokens are
+    # thin. Recorded on the step so a trace never shows a model that was
+    # not the one actually called.
+    model, downgraded = pick_model(state)
     out = llm_call(
         state,
-        model=state["model"],
+        model=model,
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": _build_user_prompt(state)},
@@ -145,6 +150,6 @@ def synthesizer_node(state: AgentState) -> AgentState:
 
     duration_ms = int((time.perf_counter() - t0) * 1000)
     state["trace"].record_step(
-        "synthesizer", duration_ms, tokens_in, tokens_out, model=state["model"]
+        "synthesizer", duration_ms, tokens_in, tokens_out, model=model, downgraded=downgraded
     )
     return state

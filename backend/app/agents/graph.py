@@ -30,6 +30,12 @@ def grounding_check_node(state: AgentState) -> AgentState:
     from app.agents.synthesizer import citations_for
     from app.guardrails import grounding
 
+    if not check_budget(state):
+        # The critic deducts after it spends, so this is the first node that
+        # can observe an overdrawn budget. Shipping would understate cost.
+        state["status"] = "refused"
+        return state
+
     # The user's question is passed so numbers echoed from it are not read as
     # fabrications: "is 20 days within the window?" invites an answer that
     # restates 20 while the evidence contains only 30.

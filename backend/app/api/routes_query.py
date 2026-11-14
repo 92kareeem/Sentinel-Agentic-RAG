@@ -16,7 +16,7 @@ from app.config import get_settings
 from app.guardrails import cost_governor, injection, input_validation, pii, quota
 from app.guardrails.auth import resolve_user
 from app.learning import casebook
-from app.llm.groq_client import CircuitOpenError
+from app.llm.base import CircuitOpenError
 from app.models.schemas import (
     Case,
     CaseOutcome,
@@ -163,7 +163,7 @@ def query(
         "doc_id": req.doc_id,
         "trace": trace,
         "attempt": 0,
-        "model": settings.groq_model_simple,
+        "model": settings.model_simple,
         "token_budget_left": budget.token_budget,
         "deadline_ts": budget.deadline_ts,
         "retrieved": [],

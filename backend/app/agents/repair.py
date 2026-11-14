@@ -28,7 +28,7 @@ def repair_rewrite_node(state: AgentState) -> AgentState:
     t0 = time.perf_counter()
     out = llm_call(
         state,
-        model=settings.groq_model_simple,
+        model=settings.model_simple,
         messages=[
             {"role": "system", "content": _REWRITE_PROMPT},
             # Always the user's original wording — rewriting a rewrite
@@ -65,7 +65,7 @@ def repair_escalate_node(state: AgentState) -> AgentState:
 
     settings = get_settings()
     t0 = time.perf_counter()
-    state["model"] = settings.groq_model_complex
+    state["model"] = settings.model_complex
     state["attempt"] += 1
     state["trace"].model_path.append(state["model"])
 
