@@ -28,12 +28,14 @@ import numpy as np
 from app.config import get_settings
 from app.documents import registry
 from app.models.schemas import Chunk, ClassificationLevel, DocumentErrorCode, DocumentStatus
+from app.observability.logging import get_logger
 from app.rag import bm25_store, embeddings, index_store
 from app.rag.chunking import chunk_file
-from app.rag.index_lock import index_publication_lock
+from app.rag.index_lock import IndexLockTimeout, index_publication_lock
 from app.rag.pdf import PdfExtractionError
 
 _MAX_PUBLISH_ATTEMPTS = 3
+_logger = get_logger()
 
 # all-MiniLM-L6-v2's output width; used only when there is no existing index to
 # read the true dimension from.
@@ -207,6 +209,23 @@ def ingest_document(
         return chunk_count, version
 
     except PdfExtractionError:
+        raise
+    except (index_store.ConcurrentUpdateError, IndexLockTimeout) as exc:
+        # The dead-letter state. The document is fine; the index was contended
+        # past every retry. Recorded with a retryable code so the owner sees a
+        # Retry button rather than a generic failure, and logged as a distinct
+        # event so a burst of these is visible as contention, not as bugs.
+        registry.update_status(
+            document_id,
+            owner_id,
+            DocumentStatus.FAILED,
+            error_code=DocumentErrorCode.PUBLISH_CONTENTION,
+            error_message="The index was busy with other uploads. Retry in a moment.",
+        )
+        _logger.error(
+            "dead_letter",
+            extra={"data": f"{document_id} {type(exc).__name__}: {str(exc)[:200]}"},
+        )
         raise
     except Exception as exc:
         registry.update_status(

@@ -138,17 +138,80 @@ def _ddb_keys(owner_id: str, document_id: str) -> dict[str, str]:
 # ---------------------------------------------------------------- public API
 
 
-def put(record: DocumentRecord) -> DocumentRecord:
-    """Create or overwrite a document record."""
+class InvalidTransition(RuntimeError):
+    """A lifecycle change the state machine does not allow, or one that lost a
+    race: the stored status was no longer the one this writer read."""
+
+
+# The document lifecycle as an explicit state machine. Every write through
+# update_status() is checked against it, and in DynamoDB the check is a
+# conditional write on the status the writer read, so two concurrent writers
+# (an index job and a delete, say) cannot both win. DELETED is terminal: a
+# tombstoned document can never be resurrected by a late ingestion finishing.
+_TRANSITIONS: dict[DocumentStatus, frozenset[DocumentStatus]] = {
+    DocumentStatus.UPLOADING: frozenset({
+        DocumentStatus.UPLOADED, DocumentStatus.PROCESSING,
+        DocumentStatus.FAILED, DocumentStatus.DELETED,
+    }),
+    DocumentStatus.UPLOADED: frozenset({
+        DocumentStatus.PROCESSING, DocumentStatus.FAILED, DocumentStatus.DELETED,
+    }),
+    DocumentStatus.PROCESSING: frozenset({
+        DocumentStatus.INDEXED, DocumentStatus.FAILED, DocumentStatus.DELETED,
+    }),
+    DocumentStatus.INDEXED: frozenset({
+        DocumentStatus.PROCESSING, DocumentStatus.INDEXED, DocumentStatus.DELETED,
+    }),
+    DocumentStatus.FAILED: frozenset({
+        DocumentStatus.PROCESSING, DocumentStatus.FAILED, DocumentStatus.DELETED,
+    }),
+    DocumentStatus.DELETED: frozenset(),
+}
+
+
+def can_transition(current: DocumentStatus, target: DocumentStatus) -> bool:
+    return target in _TRANSITIONS[current]
+
+
+def put(record: DocumentRecord, *, expected_status: DocumentStatus | None = None) -> DocumentRecord:
+    """Create or overwrite a document record.
+
+    With expected_status, the write succeeds only if the stored record still
+    has that status — a compare-and-set, atomic at DynamoDB and under the
+    process lock locally. Raises InvalidTransition when it lost the race.
+    """
     if get_settings().local_mode:
         with _local_lock:
             data = _local_read_all()
+            if expected_status is not None:
+                stored = data.get(record.document_id, {}).get("status")
+                if stored != expected_status.value:
+                    raise InvalidTransition(
+                        f"{record.document_id}: expected {expected_status.value}, found {stored}"
+                    )
             data[record.document_id] = record.model_dump(mode="json")
             _local_write_all(data)
         return record
 
     item = {**_ddb_keys(record.owner_id, record.document_id), **record.model_dump(mode="json")}
-    _table().put_item(Item=item)
+    if expected_status is None:
+        _table().put_item(Item=item)
+        return record
+    from botocore.exceptions import ClientError
+
+    try:
+        _table().put_item(
+            Item=item,
+            ConditionExpression="#s = :expected",
+            ExpressionAttributeNames={"#s": "status"},
+            ExpressionAttributeValues={":expected": expected_status.value},
+        )
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            raise InvalidTransition(
+                f"{record.document_id}: status changed concurrently"
+            ) from exc
+        raise
     return record
 
 
@@ -269,12 +332,22 @@ def update_status(
     error_code: DocumentErrorCode | None = None,
     error_message: str | None = None,
 ) -> DocumentRecord | None:
-    """Advance a document's lifecycle state, recording why if it failed."""
+    """Advance a document's lifecycle state, recording why if it failed.
+
+    Checked against the lifecycle state machine and written as a
+    compare-and-set on the status that was read. Raises InvalidTransition for
+    an illegal move (e.g. anything out of DELETED) or a lost race.
+    """
     record = get(document_id, owner_id=owner_id)
     if record is None:
         return None
+    previous = record.status
+    if not can_transition(previous, status):
+        raise InvalidTransition(f"{document_id}: {previous.value} -> {status.value} is not allowed")
 
     record.status = status
+    if status == DocumentStatus.PROCESSING:
+        record.ingest_attempts += 1
     record.updated_at = utc_now()
     if chunk_count is not None:
         record.chunk_count = chunk_count
@@ -290,7 +363,7 @@ def update_status(
     # succeeded must not keep showing a stale error in the UI.
     record.error_code = error_code
     record.error_message = error_message
-    return put(record)
+    return put(record, expected_status=previous)
 
 
 def mark_deleted(document_id: str, owner_id: str) -> DocumentRecord | None:

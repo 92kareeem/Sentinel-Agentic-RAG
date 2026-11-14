@@ -29,6 +29,7 @@ from app.guardrails import access
 from app.guardrails.auth import resolve_user
 from app.guardrails.quota import check_upload_quota
 from app.models.schemas import (
+    RETRYABLE_ERRORS,
     AccessContext,
     ChunkDetail,
     ClassificationLevel,
@@ -39,7 +40,8 @@ from app.models.schemas import (
     PresignedUploadResponse,
 )
 from app.observability.logging import get_logger
-from app.rag import retriever_snapshot
+from app.rag import index_store, retriever_snapshot
+from app.rag.index_lock import IndexLockTimeout
 from app.rag.pdf import PdfExtractionError
 
 router = APIRouter()
@@ -160,7 +162,18 @@ def _register(
     return registry.put(record)
 
 
-def _ingest_or_422(record: DocumentRecord, local: Path) -> IndexJobResponse:
+def _upload_path(record: DocumentRecord) -> Path:
+    """Where local storage keeps an upload's bytes.
+
+    Kept after indexing, not deleted: a dead-lettered document is retried
+    from these bytes, the same way the AWS path retries from the S3 object.
+    Removed when the document is deleted.
+    """
+    name = f"{record.document_id}_{record.safe_filename}"
+    return Path(get_settings().index_dir) / "uploads" / name
+
+
+def _ingest_or_422(record: DocumentRecord, local: Path, *, keep: bool = False) -> IndexJobResponse:
     """Run ingestion, translating typed extraction failures into 422s.
 
     The document's registry state is written by ingest_document() on every
@@ -176,6 +189,14 @@ def _ingest_or_422(record: DocumentRecord, local: Path) -> IndexJobResponse:
             owner_id=record.owner_id,
             source_filename=record.original_filename,
         )
+    except (index_store.ConcurrentUpdateError, IndexLockTimeout) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error_code": "PUBLISH_CONTENTION",
+                "message": "The index was busy; the document is saved and can be retried.",
+            },
+        ) from exc
     except PdfExtractionError as exc:
         _logger.warning(
             "ingest_rejected",
@@ -191,7 +212,8 @@ def _ingest_or_422(record: DocumentRecord, local: Path) -> IndexJobResponse:
         )
         raise HTTPException(status_code=500, detail="ingestion failed") from exc
     finally:
-        local.unlink(missing_ok=True)
+        if not keep:
+            local.unlink(missing_ok=True)
 
     retriever.reset_cache()  # so the next query sees the new document
     return IndexJobResponse(
@@ -336,10 +358,45 @@ def local_upload(
 
     # Written under the document id, so two users uploading the same filename
     # never collide on disk either.
-    local = Path(settings.index_dir) / f"{record.document_id}_{safe}"
+    local = _upload_path(record)
     local.parent.mkdir(parents=True, exist_ok=True)
     local.write_bytes(contents)
 
+    return _ingest_or_422(record, local, keep=True)
+
+
+@router.post("/documents/{doc_id}/retry")
+def retry_document(doc_id: str, user: dict[str, Any] = Depends(resolve_user)) -> IndexJobResponse:
+    """Re-run ingestion for a dead-lettered document from its stored bytes.
+
+    Only for failures a retry can fix (RETRYABLE_ERRORS). A scanned PDF fails
+    the same way every time, and offering to retry it would only teach people
+    the button does nothing.
+    """
+    ctx = _ctx(user)
+    record = registry.find_visible(doc_id, ctx)
+    if record is None or not (record.owner_id == ctx.user_id or ctx.is_admin):
+        raise HTTPException(status_code=404, detail="document not found")
+    if record.status != DocumentStatus.FAILED or (record.error_code or "") not in RETRYABLE_ERRORS:
+        raise HTTPException(status_code=409, detail="this document cannot be retried")
+
+    settings = get_settings()
+    if settings.local_mode:
+        local = _upload_path(record)
+        if not local.exists():
+            raise HTTPException(status_code=410, detail="the uploaded bytes are no longer stored")
+        return _ingest_or_422(record, local, keep=True)
+
+    import boto3
+    from botocore.exceptions import ClientError
+
+    local = Path("/tmp") / f"{record.document_id}_{record.safe_filename}"
+    try:
+        boto3.client("s3", region_name=settings.aws_region).download_file(
+            settings.s3_bucket_docs, record.storage_key, str(local)
+        )
+    except ClientError as exc:
+        raise HTTPException(status_code=410, detail="the uploaded object is gone") from exc
     return _ingest_or_422(record, local)
 
 
@@ -417,5 +474,7 @@ def delete_document(doc_id: str, user: dict[str, Any] = Depends(resolve_user)) -
 
     purge(doc_id, record.owner_id)
     retriever.reset_cache()  # deleted content must stop being retrievable now
+    if get_settings().local_mode:
+        _upload_path(record).unlink(missing_ok=True)
     updated = registry.get(doc_id, owner_id=record.owner_id)
     return DocumentSummary.from_record(updated or record, viewer_id=ctx.user_id)

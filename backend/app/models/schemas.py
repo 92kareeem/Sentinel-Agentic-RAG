@@ -73,6 +73,10 @@ class DocumentErrorCode(StrEnum):
     # arrived. Reported instead of leaving the document stuck in UPLOADING
     # forever, where it would also consume the owner's capacity quota.
     UPLOAD_ABANDONED = "UPLOAD_ABANDONED"
+    # Every publish attempt lost the race for the index, or the publication
+    # lock could not be acquired in time. The document itself is fine; this is
+    # the dead-letter state, retryable with POST /v1/documents/{id}/retry.
+    PUBLISH_CONTENTION = "PUBLISH_CONTENTION"
     UNSUPPORTED_CONTENT_TYPE = "UNSUPPORTED_CONTENT_TYPE"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
@@ -150,6 +154,16 @@ class DocumentRecord(BaseModel):
     embedding_model: str | None = None
     error_code: DocumentErrorCode | None = None
     error_message: str | None = None
+    # How many times ingestion has been attempted. A dead-lettered document is
+    # retried by hand, and the count is what tells an operator whether a retry
+    # is a reasonable next step or a pattern worth investigating.
+    ingest_attempts: int = 0
+
+
+# Failures a retry can plausibly fix. A scanned or encrypted PDF will fail the
+# same way every time; offering to retry it would only teach people that the
+# button does nothing.
+RETRYABLE_ERRORS = frozenset({"PUBLISH_CONTENTION", "INTERNAL_ERROR"})
 
 
 class DocumentSummary(BaseModel):
@@ -171,6 +185,8 @@ class DocumentSummary(BaseModel):
     # True when the caller uploaded it; false for a document shared into the
     # tenant by someone else. The UI uses it to decide who may delete.
     owned_by_caller: bool = True
+    retryable: bool = False
+    ingest_attempts: int = 0
 
     @classmethod
     def from_record(
@@ -183,6 +199,9 @@ class DocumentSummary(BaseModel):
             classification=record.classification,
             allowed_roles=list(record.allowed_roles),
             owned_by_caller=viewer_id is None or record.owner_id == viewer_id,
+            retryable=record.status == DocumentStatus.FAILED
+            and (record.error_code or "") in RETRYABLE_ERRORS,
+            ingest_attempts=record.ingest_attempts,
             file_size=record.file_size,
             page_count=record.page_count,
             chunk_count=record.chunk_count,
@@ -432,9 +451,18 @@ class TraceRecord(BaseModel):
 
 
 class HealthResponse(BaseModel):
+    """Liveness plus the deployment shape, so a client can adapt its UI: the
+    chaos demo is offered only when demo_mode is on, the "acting as" switcher
+    only in local storage, and a missing provider key is said out loud."""
+
     status: str = "ok"
     index_version: str
     model_warm: bool
+    storage_backend: str = "local"
+    llm_provider: str = "groq"
+    llm_configured: bool = False
+    demo_mode: bool = False
+    version: str = ""
 
 
 class Problem(BaseModel):
@@ -515,6 +543,9 @@ class Case(BaseModel):
 
     case_id: str
     owner_id: str
+    # The asker's tenant, so a tenant admin can review the whole workspace's
+    # failures in the regression queue. Empty on cases written before tenants.
+    tenant_id: str = ""
     trace_id: str
     question: str  # PII-scrubbed, as everything downstream of the API is
     outcome: CaseOutcome
@@ -630,3 +661,156 @@ class KnowledgeGapReport(BaseModel):
     marked_helpful: int = 0
     marked_wrong: int = 0
     gaps: list[KnowledgeGap]
+
+
+# ------------------------------------------------------------ telemetry
+#
+# Computed on read from stored traces, like the gap report: nothing runs on a
+# schedule, so an idle free-tier deployment costs nothing to observe.
+
+
+class StageStat(BaseModel):
+    """Per-node cost profile: where the time and tokens actually go."""
+
+    name: str
+    calls: int
+    mean_ms: float
+    p95_ms: int
+    tokens: int
+
+
+class HourBucket(BaseModel):
+    hour: str  # ISO hour, UTC: "2026-11-14T09:00Z"
+    requests: int
+    refused: int
+    p95_ms: int
+
+
+class TelemetryReport(BaseModel):
+    generated_at: str
+    window_hours: int
+    requests: int
+    answered: int
+    refused: int
+    errors: int
+    refusal_rate: float
+    cache_hit_rate: float
+    repair_rate: float
+    downgrades: int
+    latency_p50_ms: int
+    latency_p95_ms: int
+    tokens_total: int
+    tokens_per_request: float
+    token_burn_per_hour: float
+    est_cost_usd: float
+    est_cost_per_answer_usd: float
+    providers: dict[str, int]
+    refusal_reasons: dict[str, int]
+    stages: list[StageStat]
+    hourly: list[HourBucket]
+
+
+class TraceSummary(BaseModel):
+    """One row of the trace browser. The full record is GET /v1/traces/{id}."""
+
+    trace_id: str
+    created_at: str
+    user_id: str
+    query_redacted: str
+    final_status: str
+    latency_ms: int
+    total_tokens: int
+    est_cost_usd: float = 0.0
+    repair_count: int = 0
+    cache_hit: bool = False
+
+
+# ------------------------------------------------------------ the ratchet
+
+
+class RatchetCandidate(BaseModel):
+    """A case that could become a permanent regression test."""
+
+    case_id: str
+    question: str
+    diagnosis: CaseDiagnosis
+    outcome: CaseOutcome
+    correction: str | None = None
+    asked_at: str
+    owner_id: str
+    # The exact CLI command, so promotion is never blocked on the UI: in AWS
+    # mode the suite lives in git, and only a person with the repo can write it.
+    promote_command: str
+
+
+class RatchetItemView(BaseModel):
+    id: str
+    question: str
+    expect: str
+    status: str
+    reference_answer: str | None = None
+    note: str | None = None
+    diagnosis: str
+    promoted_at: str
+    locked_at: str | None = None
+
+
+class RatchetView(BaseModel):
+    enforced: int
+    pending: int
+    retired: int
+    items: list[RatchetItemView]
+    candidates: list[RatchetCandidate]
+    # True only when this server can write evals/regressions.json — local
+    # storage, and an admin caller. Otherwise the UI shows the commands.
+    writable: bool
+    verify_command: str = "python evals/run.py --regressions-only --lock"
+
+
+class PromoteRequest(BaseModel):
+    case_id: str = Field(min_length=1, max_length=100)
+    expect: str = Field(default="answer", pattern="^(answer|refuse)$")
+    # The reviewer's reference always wins over the reader's correction
+    # (ADR 0008): promotion is where a human reviews what readers claimed.
+    reference: str | None = Field(default=None, max_length=2000)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class RetireRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+# ------------------------------------------------------------ chaos demo
+
+
+class ChaosScenario(StrEnum):
+    PROMPT_INJECTION = "prompt_injection"
+    PII_LEAK = "pii_leak"
+    HALLUCINATION_TRAP = "hallucination_trap"
+    OUT_OF_SCOPE = "out_of_scope"
+    BUDGET_EXCEEDED = "budget_exceeded"
+
+
+class ChaosRequest(BaseModel):
+    scenario: ChaosScenario
+
+
+class ChaosResult(BaseModel):
+    """What one adversarial scenario did, and which layer stopped it."""
+
+    scenario: ChaosScenario
+    title: str
+    attack: str
+    caught_by: str
+    outcome: str  # blocked | redacted | refused | degraded | answered
+    passed: bool  # did the system behave as designed?
+    http_status: int
+    detail: str
+    trace_id: str | None = None
+    refusal_reason: RefusalReason | None = None
+    evidence: dict[str, str] = {}
+    steps: list[TraceStep] = []
+    adrs: list[str] = []
+    # True when a model call was replaced by a deterministic stand-in, either
+    # by design (fault injection) or because no provider key is configured.
+    simulated: bool = False

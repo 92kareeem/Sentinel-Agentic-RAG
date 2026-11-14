@@ -131,6 +131,13 @@ class Settings(BaseSettings):
     downgrade_deadline_seconds: float = 8.0
     downgrade_token_threshold: int = 2500
 
+    # Where the regression suite lives. The control plane writes it only in
+    # local storage, where the server runs next to the repository.
+    regressions_path: Path = Path("evals/regressions.json")
+    # Extra browser origins allowed by CORS, comma separated. Local mode always
+    # allows the Vite dev server and the compose web container.
+    cors_origins: str = ""
+
     # --- verified-answer cache ---
     # An answer that passed the critic and the grounding gate for THIS exact
     # question against THIS index version is deterministic evidence-backed
@@ -195,6 +202,25 @@ class Settings(BaseSettings):
         if self.demo_mode and self.storage_backend != "local":
             raise ValueError("DEMO_MODE is only permitted with STORAGE_BACKEND=local")
         return self
+
+    @property
+    def llm_configured(self) -> bool:
+        """Whether the active provider has the credentials it needs.
+
+        Not a liveness check: a configured key can still be revoked. It is
+        what lets the chaos demo say "simulated" instead of failing with a
+        401 on a fresh clone that has no key yet.
+        """
+        match self.llm_provider:
+            case "groq":
+                return bool(self.groq_api_key)
+            case "openai" | "azure":
+                return bool(self.openai_api_key)
+            case "anthropic":
+                return bool(self.anthropic_api_key and self.anthropic_model_simple)
+            case "local":
+                return True
+        return False  # pragma: no cover
 
     @property
     def model_simple(self) -> str:

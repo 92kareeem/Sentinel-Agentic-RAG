@@ -10,9 +10,11 @@ read, so a field added here reaches all three.
 from __future__ import annotations
 
 import json
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 
@@ -83,6 +85,41 @@ class TraceRecorder:
 
 _local_traces: dict[str, dict[str, Any]] = {}
 _LOCAL_MAX = 5_000  # bounded: a long-running compose instance must not grow forever
+_LOCAL_FILE = "traces.jsonl"
+_loaded_from: str | None = None
+_local_lock = threading.Lock()
+
+
+def _local_path() -> Path:
+    from app.config import get_settings
+
+    return Path(get_settings().index_dir) / _LOCAL_FILE
+
+
+def _ensure_loaded() -> None:
+    """Load the append-only trace log for the current INDEX_DIR, once.
+
+    Local traces used to live only in memory, so a restart emptied the
+    telemetry tab and made every earlier answer un-rateable. They are now
+    appended to traces.jsonl beside the registry and read back lazily.
+    Reloaded when INDEX_DIR changes, which is what keeps tests isolated.
+    """
+    global _loaded_from
+    path = _local_path()
+    if _loaded_from == str(path):
+        return
+    _local_traces.clear()
+    if path.exists():
+        with path.open(encoding="utf-8") as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue  # a torn last line after a crash is not fatal
+                _local_traces[row["trace_id"]] = row
+        while len(_local_traces) > _LOCAL_MAX:
+            _local_traces.pop(next(iter(_local_traces)))
+    _loaded_from = str(path)
 
 
 def put_trace(record: dict[str, Any]) -> None:
@@ -92,9 +129,15 @@ def put_trace(record: dict[str, Any]) -> None:
     created = record.get("created_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     record = {**record, "created_at": created}
     if settings.local_mode:
-        _local_traces[record["trace_id"]] = record
-        while len(_local_traces) > _LOCAL_MAX:
-            _local_traces.pop(next(iter(_local_traces)))
+        with _local_lock:
+            _ensure_loaded()
+            _local_traces[record["trace_id"]] = record
+            while len(_local_traces) > _LOCAL_MAX:
+                _local_traces.pop(next(iter(_local_traces)))
+            path = _local_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, default=str) + "\n")
         return
     import boto3
 
@@ -110,7 +153,9 @@ def get_trace(trace_id: str) -> dict[str, Any] | None:
 
     settings = get_settings()
     if settings.local_mode:
-        return _local_traces.get(trace_id)
+        with _local_lock:
+            _ensure_loaded()
+            return _local_traces.get(trace_id)
     import boto3
 
     table = boto3.resource("dynamodb", region_name=settings.aws_region).Table(
@@ -131,7 +176,9 @@ def list_traces(limit: int = 20, *, user_id: str | None = None) -> list[dict[str
 
     settings = get_settings()
     if settings.local_mode:
-        rows = list(_local_traces.values())
+        with _local_lock:
+            _ensure_loaded()
+            rows = list(_local_traces.values())
         if user_id is not None:
             rows = [r for r in rows if r.get("user_id") == user_id]
         return rows[-limit:][::-1]
@@ -157,7 +204,10 @@ def list_traces(limit: int = 20, *, user_id: str | None = None) -> list[dict[str
 
 def reset_local() -> None:
     """Test helper."""
-    _local_traces.clear()
+    global _loaded_from
+    with _local_lock:
+        _local_traces.clear()
+        _loaded_from = None
 
 
 def _to_ddb(obj: object) -> object:
