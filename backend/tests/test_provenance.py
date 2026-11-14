@@ -76,3 +76,21 @@ def test_a_window_spanning_a_page_break_is_attributed_to_its_own_page() -> None:
     for c in chunks:
         if c.page_number == 2:
             assert "other" in c.text
+
+
+def test_the_chunk_endpoint_returns_a_hash_a_client_can_verify(api, offline_env) -> None:
+    """End to end, the way the browser does it: fetch the chunk, recompute
+    sha256 from the published recipe, compare. Regression: shared-corpus
+    chunks have no registry row, the endpoint returned an empty checksum,
+    and every corpus citation showed as a provenance MISMATCH."""
+    from .conftest import publish_chunks
+
+    chunks = chunk_text("refund-policy", DOC, simple_word_offsets, 20, 5, document_checksum="f00d")
+    publish_chunks(chunks)
+    c = chunks[0]
+    url = f"/v1/documents/refund-policy/chunks/{c.chunk_id}"
+    body = api.get(url, headers={"x-api-key": "contractor-local"}).json()
+    parts = ("document_checksum_sha256", "char_start", "char_end", "text")
+    payload = "|".join(str(body[k]) for k in parts)
+    assert body["document_checksum_sha256"] == "f00d"
+    assert hashlib.sha256(payload.encode()).hexdigest() == body["provenance_hash"]

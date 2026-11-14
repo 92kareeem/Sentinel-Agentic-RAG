@@ -66,7 +66,11 @@ export function ChatThread({ messages, traces, onCiteClick, hasDocuments, onExam
                 key={m.id}
                 message={m}
                 onCiteClick={onCiteClick}
-                trace={m.role === "assistant" && m.kind === "answer" ? traces[m.traceId] ?? null : null}
+                trace={
+                  m.role === "assistant" && (m.kind === "answer" || m.kind === "refusal")
+                    ? traces[m.traceId] ?? null
+                    : null
+                }
               />
             ))}
           </section>

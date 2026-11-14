@@ -50,6 +50,36 @@ const PATHS = {
       <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" />
     </>
   ),
+  shield: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />,
+  bolt: <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z" />,
+  activity: <path d="M22 12h-4l-3 9L9 3l-3 9H2" />,
+  branch: (
+    <>
+      <circle cx="6" cy="6" r="2" />
+      <circle cx="6" cy="18" r="2" />
+      <circle cx="18" cy="8" r="2" />
+      <path d="M6 8v8M18 10c0 4-6 3-11 7" />
+    </>
+  ),
+  refresh: <path d="M21 12a9 9 0 1 1-2.64-6.36L21 8M21 3v5h-5" />,
+  user: (
+    <>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21a8 8 0 0 1 16 0" />
+    </>
+  ),
+  lock: (
+    <>
+      <rect x="4" y="11" width="16" height="10" rx="2" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+    </>
+  ),
+  copy: (
+    <>
+      <rect x="9" y="9" width="12" height="12" rx="2" />
+      <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
+    </>
+  ),
 } as const;
 
 export type IconName = keyof typeof PATHS;

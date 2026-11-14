@@ -238,6 +238,9 @@ class Chunk(BaseModel):
     # holding the chunk can recompute it and prove the quote is the exact
     # span of the exact file. See rag/chunking.provenance_hash.
     provenance_hash: str = ""
+    # The source file's sha256, carried on the chunk so provenance can be
+    # verified for documents with no registry row (the shared demo corpus).
+    document_checksum: str = ""
     section_path: str  # e.g. "Item 7 > Liquidity"
     text: str
     is_table: bool = False

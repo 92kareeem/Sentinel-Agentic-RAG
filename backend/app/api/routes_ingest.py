@@ -453,7 +453,10 @@ def get_chunk(
         char_end=chunk.char_end,
         text=chunk.text,
         provenance_hash=chunk.provenance_hash,
-        document_checksum_sha256=record.checksum_sha256 if record else "",
+        # The checksum the hash was computed with, from the chunk itself: a
+        # registry row can be re-uploaded, and the corpus has none at all.
+        document_checksum_sha256=chunk.document_checksum
+        or (record.checksum_sha256 if record else ""),
         classification=chunk.classification,
     )
 

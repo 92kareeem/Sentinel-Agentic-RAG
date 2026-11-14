@@ -229,6 +229,7 @@ def chunk_text(
                         allowed_roles=list(allowed_roles),
                         classification=classification,
                         provenance_hash=provenance_hash(document_checksum, start, end, body_text),
+                        document_checksum=document_checksum,
                         section_path=section_path,
                         text=body_text,
                         is_table=is_table,

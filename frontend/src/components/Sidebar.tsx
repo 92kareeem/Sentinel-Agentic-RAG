@@ -8,6 +8,7 @@ interface Props {
   onSelect: (docId: string | null) => void;
   onUploadClick: () => void;
   onDelete: (doc: DocumentSummary) => void;
+  onRetry: (doc: DocumentSummary) => void;
   open: boolean;
   onCloseMobile: () => void;
 }
@@ -27,7 +28,16 @@ function statusTone(status: string): string {
   return "busy";
 }
 
-export function Sidebar({ documents, activeDocId, onSelect, onUploadClick, onDelete, open, onCloseMobile }: Props) {
+export function Sidebar({
+  documents,
+  activeDocId,
+  onSelect,
+  onUploadClick,
+  onDelete,
+  onRetry,
+  open,
+  onCloseMobile,
+}: Props) {
   const compact = useMediaQuery(COMPACT_QUERY);
   // On a phone the sidebar covers the page, so it has to behave like any
   // other overlay: focus in, Tab stays inside, Escape closes, focus back to
@@ -114,11 +124,33 @@ export function Sidebar({ documents, activeDocId, onSelect, onUploadClick, onDel
                         {status}
                         {pages}
                       </span>
+                      {doc.classification && doc.classification !== "INTERNAL" && (
+                        <span className="nav-sub">
+                          <Icon name="lock" size={12} />
+                          {doc.classification.toLowerCase()}
+                          {doc.owned_by_caller === false ? " · shared with you" : ""}
+                        </span>
+                      )}
+                      {doc.classification === "INTERNAL" && doc.owned_by_caller === false && (
+                        <span className="nav-sub">shared with you</span>
+                      )}
                       {doc.status === "FAILED" && doc.error_message && (
                         <span className="nav-error">{doc.error_message}</span>
                       )}
                     </span>
                   </button>
+                  {doc.retryable && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-icon btn-sm doc-retry"
+                      onClick={() => onRetry(doc)}
+                      aria-label={`Retry indexing ${doc.filename}`}
+                      title="Retry indexing"
+                    >
+                      <Icon name="refresh" />
+                    </button>
+                  )}
+                  {doc.owned_by_caller !== false && (
                   <button
                     type="button"
                     className="btn btn-ghost btn-icon btn-sm btn-danger doc-delete"
@@ -128,6 +160,7 @@ export function Sidebar({ documents, activeDocId, onSelect, onUploadClick, onDel
                   >
                     <Icon name="trash" />
                   </button>
+                  )}
                 </li>
               );
             })}
