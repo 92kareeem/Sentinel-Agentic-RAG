@@ -1,3 +1,5 @@
 # Shell scripts run inside Linux containers: a CRLF shebang is "not found".
 *.sh text eol=lf
 docker/entrypoint.sh text eol=lf
+# make requires tab-indented recipes and LF is safest across platforms.
+Makefile text eol=lf

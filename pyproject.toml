@@ -1,7 +1,7 @@
 [project]
 name = "sentinel"
-version = "0.1.0"
-description = "Self-healing, guardrailed agentic RAG platform (AWS free tier + Groq)"
+version = "1.0.0"
+description = "Self-healing, zero-trust, cost-bounded agentic RAG with deterministic grounding and a regression ratchet"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi~=0.115",
