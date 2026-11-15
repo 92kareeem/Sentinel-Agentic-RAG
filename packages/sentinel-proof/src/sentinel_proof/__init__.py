@@ -23,7 +23,7 @@ from .passages import Passage, from_langchain, from_llamaindex, passages_from_te
 from .provenance import HASH_RECIPE, check_provenance, document_sha256, provenance_hash
 from .refusal import REFUSAL_SENTINEL, RefusalReason, is_refusal, refusal_text
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "HASH_RECIPE",

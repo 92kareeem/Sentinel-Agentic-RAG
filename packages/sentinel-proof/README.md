@@ -1,16 +1,39 @@
-# sentinel-proof
+# sentinel-proof: catch RAG hallucinations before your users do
 
-**A deterministic grounding gate for RAG answers.** Every number in a claim
-must appear in the passage it cites. Every citation must point at a passage
-that supports the sentence in front of it. What cannot be verified is stripped,
-and if too much is stripped the answer is refused with a reason code instead
-of shipped.
+[![PyPI](https://img.shields.io/pypi/v/sentinel-proof.svg)](https://pypi.org/project/sentinel-proof/)
+[![Python](https://img.shields.io/pypi/pyversions/sentinel-proof.svg)](https://pypi.org/project/sentinel-proof/)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/92kareeem/sentinel-rag/blob/main/packages/sentinel-proof/LICENSE)
+[![Dependencies: none](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](https://github.com/92kareeem/sentinel-rag/blob/main/packages/sentinel-proof/pyproject.toml)
 
-Pure Python. No dependencies. No model calls. Works with any retrieval stack.
+**Check every sentence of an LLM answer against the retrieved context, before
+it ships.** `sentinel-proof` is a hallucination guardrail for
+retrieval-augmented generation (RAG). It checks that every number in the answer
+appears in the evidence and that every citation points at a passage that
+supports its sentence. Wrong citations are re-pointed, unsupported sentences
+are removed, and an answer that is mostly unsupported is refused with a reason
+code instead of being shown.
+
+Pure Python. No dependencies, no model calls, no API key, no GPU. It runs in
+microseconds, so it can check every production answer rather than a sample.
+It works with LangChain, LlamaIndex, the OpenAI or Anthropic SDKs, or your own
+retriever.
 
 ```bash
 pip install sentinel-proof
 ```
+
+**Use it when:**
+
+- your RAG chatbot or document assistant **makes up numbers**: prices, dates,
+  limits, percentages that are not in your documents;
+- the model **cites the wrong source**, so a user who clicks `[2]` reads a
+  passage that says nothing of the kind;
+- you need an answer that is **grounded or refused**, not a faithfulness score
+  you then have to put a threshold on;
+- you want a **fast, deterministic check in CI** over a golden set of answers,
+  with no judge model to pay for or keep stable;
+- you work in a regulated domain (legal, finance, healthcare, HR policy) and
+  have to show **which passage each sentence came from**.
 
 ```python
 from sentinel_proof import verify, passages_from_texts
@@ -154,6 +177,72 @@ Also exported: `Passage`, `passages_from_texts`, `from_langchain`,
 `from_llamaindex`, `provenance_hash`, `check_provenance`, `document_sha256`,
 `normalize_citations`, `strip_citations`, `RefusalReason`, `refusal_text`,
 `is_refusal`.
+
+## How it fits with other tools
+
+Most hallucination tooling *measures*: it returns a score from a judge model or
+a trained classifier. `sentinel-proof` *enforces*: it edits the answer and
+decides whether it ships. They are complementary, and the strongest setup uses
+both.
+
+| | Typical use | Needs a model | Output | Changes the answer |
+|---|---|---|---|---|
+| LLM-as-judge metrics (Ragas faithfulness, DeepEval) | Offline evaluation of a pipeline | Yes, a call per answer | A score | No |
+| Hallucination classifiers (HHEM, Lynx, LettuceDetect) | Detection, monitoring | Yes, local or hosted | A score or labelled spans | No |
+| Guardrail frameworks (NeMo Guardrails, Guardrails AI) | Policy rails around the model | Usually, for fact checks | Pass, fail or reask | Sometimes, by reasking |
+| **sentinel-proof** | The last step before an answer is shown | **No** | Per-sentence verdict | **Yes**: re-points citations, strips claims, refuses |
+
+Use a judge or classifier to catch paraphrase that misstates its source, which
+this gate cannot see (see below). Use this gate so that a fabricated number or a
+wrong citation never reaches a user, whatever the judge said.
+
+## FAQ
+
+### How do I detect hallucinations in a RAG answer without an LLM judge?
+
+Ask the model to cite passages (`[1]`, `[2]`), then pass the answer and the
+retrieved passages to `verify()`. Each sentence is checked against the
+passages it cites: its numbers must appear there and its content words must
+overlap. The verdict lists every claim as supported, repaired or stripped.
+
+### How do I check that an LLM's citations are correct?
+
+The same call. A citation is valid only if the passage it points at supports
+the sentence. If another retrieved passage supports it instead, the citation is
+rewritten to point there (`v.repaired_citations` counts them). A citation to a
+passage that was never retrieved (`[9]` when there are three) is never
+trusted: the sentence is re-pointed to a retrieved passage that supports it,
+or removed.
+
+### How do I stop my LLM from making up numbers?
+
+Prompts reduce it; they do not prevent it. `verify()` removes any sentence
+containing a figure (`30 days`, `$1,200`, `4.5%`) that is not in the retrieved
+text, and refuses the answer if too much has to go. Numbers the user typed in
+the question are allowed, because restating them is not fabrication.
+
+### Does it work with LangChain, LlamaIndex or the OpenAI SDK?
+
+Yes. `from_langchain(docs)` and `from_llamaindex(nodes)` turn retriever output
+into passages, without importing either library. With a raw SDK, pass the
+passage strings to `passages_from_texts` and the completion text to `verify`.
+Nothing changes in your prompt if it already asks for `[1]`-style citations.
+
+### Does it need a GPU, an API key or network access?
+
+No. It is string processing in the standard library, with no dependencies, so
+it runs anywhere Python 3.10+ runs, including AWS Lambda and air-gapped hosts.
+
+### Is it a replacement for Ragas, DeepEval or an NLI model?
+
+No. Those judge meaning; this gate checks evidence. Run them for evaluation and
+for paraphrase, and run this on every answer as the deterministic floor.
+
+### What happens when the answer can't be verified?
+
+`v.ok` is `False`, `v.answer` is empty, and `v.refusal` says why
+(`UNVERIFIABLE_ANSWER`, `INSUFFICIENT_EVIDENCE`). `v.safe_text()` returns
+refusal prose that never leaks the unverified draft.
 
 ## What it is not
 

@@ -1,22 +1,47 @@
 [project]
 name = "sentinel-proof"
-version = "0.1.0"
-description = "Deterministic grounding gate for RAG: every number must be in the evidence, every citation must point where it says, and what cannot be verified is refused with a reason."
+version = "0.1.1"
+description = "Catch RAG hallucinations without an LLM judge: check every number and citation in an LLM answer against the retrieved context, fix wrong citations, strip unsupported claims, and refuse what cannot be grounded."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-keywords = ["rag", "hallucination", "grounding", "citations", "llm", "guardrails", "verification"]
+keywords = [
+    "rag",
+    "retrieval-augmented-generation",
+    "hallucination",
+    "hallucination-detection",
+    "llm",
+    "llm-guardrails",
+    "guardrails",
+    "grounding",
+    "groundedness",
+    "faithfulness",
+    "citations",
+    "citation-verification",
+    "fact-checking",
+    "llm-evaluation",
+    "ai-safety",
+    "langchain",
+    "llamaindex",
+    "openai",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Text Processing :: Linguistic",
     "Typing :: Typed",
 ]
 dependencies = []
@@ -24,6 +49,7 @@ dependencies = []
 [project.urls]
 Homepage = "https://github.com/92kareeem/sentinel-rag"
 Documentation = "https://github.com/92kareeem/sentinel-rag/tree/main/packages/sentinel-proof"
+Source = "https://github.com/92kareeem/sentinel-rag/tree/main/packages/sentinel-proof/src/sentinel_proof"
 Changelog = "https://github.com/92kareeem/sentinel-rag/blob/main/packages/sentinel-proof/CHANGELOG.md"
 Issues = "https://github.com/92kareeem/sentinel-rag/issues"
 

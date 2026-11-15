@@ -16,6 +16,13 @@ Every sentence it ships is cited and checked against the passage it cites. What 
 
 </div>
 
+> **Only need the hallucination check?** The grounding gate is published on its own as
+> [`sentinel-proof`](packages/sentinel-proof) ([PyPI](https://pypi.org/project/sentinel-proof/), Apache-2.0):
+> `pip install sentinel-proof`, no dependencies, no model calls. It checks every number and
+> citation in an LLM answer against the retrieved passages, re-points wrong citations,
+> strips unsupported claims and refuses what can't be grounded. Works with LangChain,
+> LlamaIndex or any retriever.
+
 ---
 
 ## 60-second quickstart
@@ -24,7 +31,7 @@ You need Docker. You do not need Python, Node, an AWS account or, for the demo, 
 
 ```bash
 git clone https://github.com/92kareeem/sentinel-rag.git
-cd Sentinel-RAG
+cd sentinel-rag
 cp .env.example .env        # optional: add a free Groq key from console.groq.com
 docker compose up --build   # then open http://localhost:5173
 ```

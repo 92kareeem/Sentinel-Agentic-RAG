@@ -6,6 +6,21 @@ All notable changes to `sentinel-proof`. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-15
+
+Documentation and packaging metadata only; no change to verification behaviour.
+
+### Changed
+
+- README leads with the problems the package solves, and adds a comparison with
+  LLM-judge metrics, hallucination classifiers and guardrail frameworks, plus an FAQ.
+- PyPI summary, keywords and classifiers describe the package in the terms
+  people search for.
+
+### Added
+
+- `tests/test_readme_claims.py`: every behaviour the README promises is tested.
+
 ## [0.1.0] - 2026-11-15
 
 First release, extracted from the grounding gate that runs in production
