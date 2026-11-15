@@ -18,9 +18,18 @@ import boto3
 REGION = "ap-south-1"
 TABLE = "sentinel-users"
 
+# tenant_id, roles and clearance drive document visibility (see
+# backend/app/guardrails/access.py). Both seeded users share one tenant so the
+# admin sees the demo user's uploads; add rows here for more tenants.
 USERS = [
-    {"user_id": "admin", "is_admin": True, "daily_query_limit": 0, "display_name": "Admin"},
-    {"user_id": "demo", "is_admin": False, "daily_query_limit": 50, "display_name": "Demo"},
+    {
+        "user_id": "admin", "is_admin": True, "daily_query_limit": 0, "display_name": "Admin",
+        "tenant_id": "default", "roles": ["admin", "employee"], "clearance": "RESTRICTED",
+    },
+    {
+        "user_id": "demo", "is_admin": False, "daily_query_limit": 50, "display_name": "Demo",
+        "tenant_id": "default", "roles": ["employee"], "clearance": "INTERNAL",
+    },
 ]
 
 

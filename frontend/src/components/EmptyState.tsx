@@ -5,12 +5,14 @@ interface Props {
   onExample: (q: string) => void;
 }
 
-// Generic on purpose: example questions must not assume content the backend
-// has not told us about. These are true of any uploaded document.
+// The repository ships a small demo corpus (./corpus) that is indexed on
+// first start, so these are answerable out of the box. The last one is
+// deliberately NOT covered: watching a clean refusal is half the demo.
 const EXAMPLES = [
-  "What is this document about?",
-  "Summarize the key points",
-  "What are the main policies or requirements described here?",
+  "What restocking fee applies in India, and how long does processing take?",
+  "Within how many days can a customer request a refund?",
+  "Who can issue manual refunds without additional approval?",
+  "What is the parental leave policy for contractors?",
 ];
 
 // Must match what UploadModal actually accepts (.pdf, .md, .txt). This used

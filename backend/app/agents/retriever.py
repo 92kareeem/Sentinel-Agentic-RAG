@@ -6,7 +6,16 @@ rag/retriever_snapshot.py, which hands out one immutable, self-consistent view
 per request; this module binds exactly one of those on entry and never reads
 a global mid-search. Runs again after repair_rewrite with the rewritten
 search query.
+
+Authorization happens BEFORE scoring. The allowed rows are handed to FAISS as
+a selector and to BM25 as a mask, so a chunk the caller may not see is never
+ranked, never loaded into state and never in a prompt — not filtered out of a
+top-N it had already won a place in. A final re-check on the returned chunks
+is kept as a tripwire: it should never fire, and if it ever does the trace
+says so.
 """
+
+from __future__ import annotations
 
 import re
 import time
@@ -14,11 +23,13 @@ import time
 from app.agents.budget import check_budget
 from app.agents.state import AgentState
 from app.config import get_settings
-from app.models.schemas import Chunk
+from app.guardrails import access
+from app.models.schemas import AccessContext, Chunk
+from app.observability.logging import get_logger
 from app.rag import bm25_store, embeddings, index_store, retriever_snapshot
-from app.rag.retriever_snapshot import IndexSnapshot
 
 _TERM_RE = re.compile(r"\w+")
+_logger = get_logger()
 
 
 def _normalize_query_terms(query: str) -> set[str]:
@@ -77,33 +88,13 @@ def reset_cache() -> None:
     retriever_snapshot.invalidate()
 
 
-def _visible_rows(snap: IndexSnapshot, owner_id: str, doc_id: str | None) -> set[int] | None:
-    """Row ids this caller is allowed to see.
-
-    Returns None when no filtering is needed (no rows are excluded), so the
-    common unscoped path stays allocation-free.
-
-    Two independent restrictions apply:
-      * tenant isolation — a chunk is only visible to the user who owns the
-        document it came from. This is enforced here, at retrieval, rather
-        than only at the API edge, so no future caller can bypass it.
-      * document scope — when the client asks about one document, matching is
-        on EXACT document_id. The previous `startswith` test meant one
-        document id that happened to prefix another silently widened the
-        scope to both.
-    """
-    if doc_id is None and not owner_id:
-        return None
-    rows = set()
-    for i, chunk in enumerate(snap.chunks):
-        # Chunks written before owner tracking have owner_id="" and are treated
-        # as shared corpus (the seeded demo documents), visible to everyone.
-        if chunk.owner_id and owner_id and chunk.owner_id != owner_id:
-            continue
-        if doc_id is not None and chunk.doc_id != doc_id:
-            continue
-        rows.add(i)
-    return rows
+def _context(state: AgentState) -> AccessContext:
+    """The caller's access context, or an owner-only one for legacy callers
+    (the eval harness and scripts build state with just a user_id)."""
+    ctx = state.get("access")
+    if ctx is not None:
+        return ctx
+    return AccessContext(user_id=state.get("user_id", ""))
 
 
 def retriever_node(state: AgentState) -> AgentState:
@@ -117,25 +108,26 @@ def retriever_node(state: AgentState) -> AgentState:
     # Bound ONCE, then used for everything below. The index, the chunk list its
     # row ids point into, the BM25 model and the version only mean anything
     # together; they used to be four globals that an upload could swap out from
-    # under a query already running in FastAPI's threadpool. The loud form of that
-    # was an IndexError on `_chunks[row]`; the quiet version returned real
-    # chunk text for row ids belonging to a different index version, so a
-    # citation pointed at the wrong passage with nothing reporting a problem.
+    # under a query already running in FastAPI's threadpool.
     snap = retriever_snapshot.current()
 
     doc_id = state.get("doc_id")
-    owner_id = state.get("user_id", "")
-    allowed = _visible_rows(snap, owner_id, doc_id)
+    ctx = _context(state)
+    allowed = access.visible_rows(snap.chunks, ctx, doc_id)
+    excluded = 0 if allowed is None else snap.size - len(allowed)
 
-    # When scoping/filtering, pull the whole candidate space before filtering so
-    # a small document is fully covered rather than being crowded out of a
-    # globally-ranked top-N by a larger corpus.
+    # When filtering, pull the whole candidate space so a small document is
+    # fully covered rather than crowded out of a globally-ranked top-N.
     cand = snap.index.ntotal if allowed is not None else settings.candidates_per_retriever
 
     if snap.index.ntotal == 0 or (allowed is not None and not allowed):
         state["retrieved"] = []
         state["trace"].record_step(
-            "retriever", int((time.perf_counter() - t0) * 1000), chunks=0, scope=doc_id or "all"
+            "retriever",
+            int((time.perf_counter() - t0) * 1000),
+            chunks=0,
+            scope=doc_id or "all",
+            rows_excluded=excluded,
         )
         return state
 
@@ -145,11 +137,10 @@ def retriever_node(state: AgentState) -> AgentState:
     # and the critic answer and score against.
     search_query = state["search_query"]
     qvec = embeddings.embed_texts([search_query])[0]
-    dense = [row for row, _ in index_store.search(snap.index, qvec, cand)]
-    sparse = [row for row, _ in bm25_store.search(snap.bm25, search_query, cand)]
-    if allowed is not None:
-        dense = [r for r in dense if r in allowed]
-        sparse = [r for r in sparse if r in allowed]
+    dense = [row for row, _ in index_store.search(snap.index, qvec, cand, allowed_rows=allowed)]
+    sparse = [
+        row for row, _ in bm25_store.search(snap.bm25, search_query, cand, allowed_rows=allowed)
+    ]
 
     fused = bm25_store.rrf_fuse([dense, sparse], k=settings.rrf_k, top_k=settings.top_k)
     ranked_rows = [row for row, _ in fused]
@@ -160,7 +151,18 @@ def retriever_node(state: AgentState) -> AgentState:
         query_terms=_normalize_query_terms(search_query),
     )
 
-    state["retrieved"] = reranked[: settings.top_k]
+    # Tripwire. Pre-scoring exclusion makes this a no-op; it exists so that a
+    # future regression in the selector path is loud instead of a leak.
+    safe = [
+        c for c in reranked
+        if access.can_see(ctx, c) and (doc_id is None or c.doc_id == doc_id)
+    ]
+    if len(safe) != len(reranked):
+        _logger.error(
+            "access_tripwire",
+            extra={"data": f"{len(reranked) - len(safe)} chunk(s) failed the final check"},
+        )
+    state["retrieved"] = safe[: settings.top_k]
 
     duration_ms = int((time.perf_counter() - t0) * 1000)
     state["trace"].record_step(
@@ -168,6 +170,7 @@ def retriever_node(state: AgentState) -> AgentState:
         duration_ms,
         chunks=len(state["retrieved"]),
         scope=doc_id or "all",
+        rows_excluded=excluded,
         index_version=snap.version or "none",
     )
     return state

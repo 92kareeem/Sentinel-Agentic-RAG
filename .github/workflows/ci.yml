@@ -136,3 +136,52 @@ jobs:
       - name: Clean up
         if: always()
         run: docker rm -f sentinel-ci || true
+
+  compose:
+    name: docker compose up works from a clean clone
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The README promises `docker compose up` with nothing else installed
+      # and no key. This job holds it to that: build both images, start the
+      # stack with NO provider key, wait for the API to index the corpus and
+      # report healthy, then check the web UI serves and every chaos scenario
+      # is handled as designed (offline scenarios fall back to deterministic
+      # stand-ins and say so).
+      - name: Build and start
+        run: docker compose up --build -d
+      - name: Wait for a healthy API
+        run: |
+          for i in $(seq 1 60); do
+            s=$(docker inspect -f '{{.State.Health.Status}}' sentinel-api-1 || true)
+            [ "$s" = healthy ] && exit 0
+            sleep 3
+          done
+          docker compose logs api
+          exit 1
+      - name: Web UI and API respond
+        run: |
+          curl -fsS -o /dev/null http://localhost:5173/
+          curl -fsS http://localhost:8000/healthz | python3 -c "
+          import json, sys
+          h = json.load(sys.stdin)
+          assert h['index_version'] != 'absent', h
+          assert h['demo_mode'] is True, h
+          print('healthy:', h)"
+      - name: Every chaos scenario is caught by the layer designed for it
+        run: |
+          for s in prompt_injection pii_leak hallucination_trap out_of_scope budget_exceeded; do
+            curl -fsS -X POST http://localhost:8000/v1/demo/chaos \
+              -H 'x-api-key: demo-local' -H 'content-type: application/json' \
+              -d "{\"scenario\":\"$s\"}" | python3 -c "
+          import json, sys
+          r = json.load(sys.stdin)
+          print(f\"{r['scenario']:<20} {r['outcome']:<9} passed={r['passed']}\")
+          assert r['passed'], r"
+          done
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs
+      - name: Clean up
+        if: always()
+        run: docker compose down -v

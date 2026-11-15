@@ -11,7 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from mangum import Mangum
 
+from app import __version__
 from app.api import (
+    routes_demo,
     routes_feedback,
     routes_health,
     routes_ingest,
@@ -24,14 +26,18 @@ from app.models.schemas import Problem
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Sentinel", version="0.1.0")
-    if get_settings().local_mode:
-        # Vite dev server runs on a different origin (localhost:5173) than the
-        # API (localhost:8000); production fronts the API with API Gateway/
-        # CloudFront on the same logical domain, so this is dev-only.
+    settings = get_settings()
+    app = FastAPI(title="Sentinel", version=__version__)
+    origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+    if settings.local_mode:
+        # The Vite dev server and the compose web container run on a different
+        # origin than the API; production fronts both from one CloudFront
+        # distribution, so the wildcard-free local list is dev-only.
+        origins += ["http://localhost:5173", "http://127.0.0.1:5173"]
+    if origins:
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+            allow_origins=sorted(set(origins)),
             allow_methods=["*"],
             allow_headers=["*"],
         )
@@ -41,6 +47,10 @@ def create_app() -> FastAPI:
     app.include_router(routes_traces.router, prefix="/v1")
     app.include_router(routes_insights.router, prefix="/v1")
     app.include_router(routes_feedback.router, prefix="/v1")
+    if settings.demo_mode:
+        # Fault injection exists only where config.py allowed DEMO_MODE, which
+        # is local storage. The route is not even registered elsewhere.
+        app.include_router(routes_demo.router, prefix="/v1")
 
     @app.exception_handler(HTTPException)
     async def http_problem(request: Request, exc: HTTPException) -> JSONResponse:

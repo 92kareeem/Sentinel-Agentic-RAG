@@ -52,7 +52,7 @@ def router_node(state: AgentState) -> AgentState:
     t0 = time.perf_counter()
 
     label = _heuristic(state["query"])
-    model = settings.groq_model_simple if label == "simple" else settings.groq_model_complex
+    model = settings.model_simple if label == "simple" else settings.model_complex
     state["model"] = model
 
     duration_ms = int((time.perf_counter() - t0) * 1000)

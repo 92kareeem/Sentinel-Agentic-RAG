@@ -73,8 +73,53 @@ class DocumentErrorCode(StrEnum):
     # arrived. Reported instead of leaving the document stuck in UPLOADING
     # forever, where it would also consume the owner's capacity quota.
     UPLOAD_ABANDONED = "UPLOAD_ABANDONED"
+    # Every publish attempt lost the race for the index, or the publication
+    # lock could not be acquired in time. The document itself is fine; this is
+    # the dead-letter state, retryable with POST /v1/documents/{id}/retry.
+    PUBLISH_CONTENTION = "PUBLISH_CONTENTION"
     UNSUPPORTED_CONTENT_TYPE = "UNSUPPORTED_CONTENT_TYPE"
     INTERNAL_ERROR = "INTERNAL_ERROR"
+
+
+class ClassificationLevel(StrEnum):
+    """How sensitive a document is, as an ordered ladder.
+
+    A caller sees a chunk only when their clearance is at least the chunk's
+    level. Ordered so the comparison is one integer test rather than a table
+    of pairs that drifts when a level is added.
+    """
+
+    PUBLIC = "PUBLIC"
+    INTERNAL = "INTERNAL"
+    CONFIDENTIAL = "CONFIDENTIAL"
+    RESTRICTED = "RESTRICTED"
+
+    @property
+    def rank(self) -> int:
+        return _CLASSIFICATION_RANK[self]
+
+
+_CLASSIFICATION_RANK: dict[ClassificationLevel, int] = {
+    ClassificationLevel.PUBLIC: 0,
+    ClassificationLevel.INTERNAL: 1,
+    ClassificationLevel.CONFIDENTIAL: 2,
+    ClassificationLevel.RESTRICTED: 3,
+}
+
+
+class AccessContext(BaseModel):
+    """Who is asking, resolved once at the API edge and carried into the graph.
+
+    Every authorization decision — which documents list, which chunks may be
+    scored, which trace may be read — is a pure function of this object and
+    the resource. Nothing downstream re-reads the user table.
+    """
+
+    user_id: str
+    tenant_id: str = ""
+    roles: list[str] = Field(default_factory=list)
+    clearance: ClassificationLevel = ClassificationLevel.INTERNAL
+    is_admin: bool = False
 
 
 class DocumentRecord(BaseModel):
@@ -87,6 +132,12 @@ class DocumentRecord(BaseModel):
 
     document_id: str
     owner_id: str
+    # Access control. An empty allowed_roles means owner-only, which is what
+    # every document uploaded before roles existed should mean. A tenant
+    # admin sees every document in the tenant regardless.
+    tenant_id: str = ""
+    allowed_roles: list[str] = Field(default_factory=list)
+    classification: ClassificationLevel = ClassificationLevel.INTERNAL
     original_filename: str
     safe_filename: str
     content_type: str
@@ -103,6 +154,16 @@ class DocumentRecord(BaseModel):
     embedding_model: str | None = None
     error_code: DocumentErrorCode | None = None
     error_message: str | None = None
+    # How many times ingestion has been attempted. A dead-lettered document is
+    # retried by hand, and the count is what tells an operator whether a retry
+    # is a reasonable next step or a pattern worth investigating.
+    ingest_attempts: int = 0
+
+
+# Failures a retry can plausibly fix. A scanned or encrypted PDF will fail the
+# same way every time; offering to retry it would only teach people that the
+# button does nothing.
+RETRYABLE_ERRORS = frozenset({"PUBLISH_CONTENTION", "INTERNAL_ERROR"})
 
 
 class DocumentSummary(BaseModel):
@@ -119,13 +180,28 @@ class DocumentSummary(BaseModel):
     updated_at: str
     error_code: DocumentErrorCode | None = None
     error_message: str | None = None
+    classification: ClassificationLevel = ClassificationLevel.INTERNAL
+    allowed_roles: list[str] = Field(default_factory=list)
+    # True when the caller uploaded it; false for a document shared into the
+    # tenant by someone else. The UI uses it to decide who may delete.
+    owned_by_caller: bool = True
+    retryable: bool = False
+    ingest_attempts: int = 0
 
     @classmethod
-    def from_record(cls, record: DocumentRecord) -> "DocumentSummary":
+    def from_record(
+        cls, record: DocumentRecord, *, viewer_id: str | None = None
+    ) -> "DocumentSummary":
         return cls(
             document_id=record.document_id,
             filename=record.original_filename,
             status=record.status,
+            classification=record.classification,
+            allowed_roles=list(record.allowed_roles),
+            owned_by_caller=viewer_id is None or record.owner_id == viewer_id,
+            retryable=record.status == DocumentStatus.FAILED
+            and (record.error_code or "") in RETRYABLE_ERRORS,
+            ingest_attempts=record.ingest_attempts,
             file_size=record.file_size,
             page_count=record.page_count,
             chunk_count=record.chunk_count,
@@ -152,6 +228,19 @@ class Chunk(BaseModel):
     chunk_id: str  # deterministic: "{doc_id}_p{page}_s{section_idx}_c{chunk_idx}"
     doc_id: str  # == DocumentRecord.document_id (server-generated, never a filename)
     owner_id: str = ""  # denormalized for retrieval-time tenant filtering
+    # Denormalized from the document so access filtering never needs a
+    # registry read inside retrieval. An empty tenant_id is the seeded demo
+    # corpus, visible to every tenant.
+    tenant_id: str = ""
+    allowed_roles: list[str] = Field(default_factory=list)
+    classification: ClassificationLevel = ClassificationLevel.PUBLIC
+    # sha256 over (document checksum, char_start, char_end, text): a client
+    # holding the chunk can recompute it and prove the quote is the exact
+    # span of the exact file. See rag/chunking.provenance_hash.
+    provenance_hash: str = ""
+    # The source file's sha256, carried on the chunk so provenance can be
+    # verified for documents with no registry row (the shared demo corpus).
+    document_checksum: str = ""
     section_path: str  # e.g. "Item 7 > Liquidity"
     text: str
     is_table: bool = False
@@ -175,6 +264,34 @@ class Citation(BaseModel):
     page_number: int | None = None
     source_filename: str = ""
     document_id: str = ""
+    provenance_hash: str = ""
+    char_start: int | None = None
+    char_end: int | None = None
+
+
+class ChunkDetail(BaseModel):
+    """One chunk in full, with everything needed to verify its provenance.
+
+    Served by GET /v1/documents/{id}/chunks/{chunk_id}, authorized with the
+    same visibility rule retrieval uses. The hash recipe is stated in the
+    response so a client never has to read server code to check it.
+    """
+
+    chunk_id: str
+    document_id: str
+    source_filename: str
+    section_path: str
+    page_number: int | None
+    char_start: int
+    char_end: int
+    text: str
+    provenance_hash: str
+    document_checksum_sha256: str
+    hash_recipe: str = (
+        "sha256(utf8(document_checksum_sha256 + '|' + char_start + '|' + char_end"
+        " + '|' + text))"
+    )
+    classification: ClassificationLevel
 
 
 # ---------------------------------------------------------------- /v1/query
@@ -337,9 +454,18 @@ class TraceRecord(BaseModel):
 
 
 class HealthResponse(BaseModel):
+    """Liveness plus the deployment shape, so a client can adapt its UI: the
+    chaos demo is offered only when demo_mode is on, the "acting as" switcher
+    only in local storage, and a missing provider key is said out loud."""
+
     status: str = "ok"
     index_version: str
     model_warm: bool
+    storage_backend: str = "local"
+    llm_provider: str = "groq"
+    llm_configured: bool = False
+    demo_mode: bool = False
+    version: str = ""
 
 
 class Problem(BaseModel):
@@ -420,6 +546,9 @@ class Case(BaseModel):
 
     case_id: str
     owner_id: str
+    # The asker's tenant, so a tenant admin can review the whole workspace's
+    # failures in the regression queue. Empty on cases written before tenants.
+    tenant_id: str = ""
     trace_id: str
     question: str  # PII-scrubbed, as everything downstream of the API is
     outcome: CaseOutcome
@@ -535,3 +664,156 @@ class KnowledgeGapReport(BaseModel):
     marked_helpful: int = 0
     marked_wrong: int = 0
     gaps: list[KnowledgeGap]
+
+
+# ------------------------------------------------------------ telemetry
+#
+# Computed on read from stored traces, like the gap report: nothing runs on a
+# schedule, so an idle free-tier deployment costs nothing to observe.
+
+
+class StageStat(BaseModel):
+    """Per-node cost profile: where the time and tokens actually go."""
+
+    name: str
+    calls: int
+    mean_ms: float
+    p95_ms: int
+    tokens: int
+
+
+class HourBucket(BaseModel):
+    hour: str  # ISO hour, UTC: "2026-11-14T09:00Z"
+    requests: int
+    refused: int
+    p95_ms: int
+
+
+class TelemetryReport(BaseModel):
+    generated_at: str
+    window_hours: int
+    requests: int
+    answered: int
+    refused: int
+    errors: int
+    refusal_rate: float
+    cache_hit_rate: float
+    repair_rate: float
+    downgrades: int
+    latency_p50_ms: int
+    latency_p95_ms: int
+    tokens_total: int
+    tokens_per_request: float
+    token_burn_per_hour: float
+    est_cost_usd: float
+    est_cost_per_answer_usd: float
+    providers: dict[str, int]
+    refusal_reasons: dict[str, int]
+    stages: list[StageStat]
+    hourly: list[HourBucket]
+
+
+class TraceSummary(BaseModel):
+    """One row of the trace browser. The full record is GET /v1/traces/{id}."""
+
+    trace_id: str
+    created_at: str
+    user_id: str
+    query_redacted: str
+    final_status: str
+    latency_ms: int
+    total_tokens: int
+    est_cost_usd: float = 0.0
+    repair_count: int = 0
+    cache_hit: bool = False
+
+
+# ------------------------------------------------------------ the ratchet
+
+
+class RatchetCandidate(BaseModel):
+    """A case that could become a permanent regression test."""
+
+    case_id: str
+    question: str
+    diagnosis: CaseDiagnosis
+    outcome: CaseOutcome
+    correction: str | None = None
+    asked_at: str
+    owner_id: str
+    # The exact CLI command, so promotion is never blocked on the UI: in AWS
+    # mode the suite lives in git, and only a person with the repo can write it.
+    promote_command: str
+
+
+class RatchetItemView(BaseModel):
+    id: str
+    question: str
+    expect: str
+    status: str
+    reference_answer: str | None = None
+    note: str | None = None
+    diagnosis: str
+    promoted_at: str
+    locked_at: str | None = None
+
+
+class RatchetView(BaseModel):
+    enforced: int
+    pending: int
+    retired: int
+    items: list[RatchetItemView]
+    candidates: list[RatchetCandidate]
+    # True only when this server can write evals/regressions.json — local
+    # storage, and an admin caller. Otherwise the UI shows the commands.
+    writable: bool
+    verify_command: str = "python evals/run.py --regressions-only --lock"
+
+
+class PromoteRequest(BaseModel):
+    case_id: str = Field(min_length=1, max_length=100)
+    expect: str = Field(default="answer", pattern="^(answer|refuse)$")
+    # The reviewer's reference always wins over the reader's correction
+    # (ADR 0008): promotion is where a human reviews what readers claimed.
+    reference: str | None = Field(default=None, max_length=2000)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class RetireRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+# ------------------------------------------------------------ chaos demo
+
+
+class ChaosScenario(StrEnum):
+    PROMPT_INJECTION = "prompt_injection"
+    PII_LEAK = "pii_leak"
+    HALLUCINATION_TRAP = "hallucination_trap"
+    OUT_OF_SCOPE = "out_of_scope"
+    BUDGET_EXCEEDED = "budget_exceeded"
+
+
+class ChaosRequest(BaseModel):
+    scenario: ChaosScenario
+
+
+class ChaosResult(BaseModel):
+    """What one adversarial scenario did, and which layer stopped it."""
+
+    scenario: ChaosScenario
+    title: str
+    attack: str
+    caught_by: str
+    outcome: str  # blocked | redacted | refused | degraded | answered
+    passed: bool  # did the system behave as designed?
+    http_status: int
+    detail: str
+    trace_id: str | None = None
+    refusal_reason: RefusalReason | None = None
+    evidence: dict[str, str] = {}
+    steps: list[TraceStep] = []
+    adrs: list[str] = []
+    # True when a model call was replaced by a deterministic stand-in, either
+    # by design (fault injection) or because no provider key is configured.
+    simulated: bool = False

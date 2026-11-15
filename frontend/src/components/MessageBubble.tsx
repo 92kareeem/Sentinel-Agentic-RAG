@@ -1,9 +1,10 @@
 import { renderAnswerMarkdown } from "../lib/markdown";
-import type { ChatMessage, Citation, TraceRecord } from "../types";
+import type { ChatMessage, Citation, StageEvent, TraceRecord } from "../types";
 import { REFUSAL_COPY } from "../types";
 import { FeedbackBar } from "./FeedbackBar";
 import { Icon } from "./Icon";
 import { ResponseDetails } from "./ResponseDetails";
+import { TraceGraph } from "./TraceGraph";
 
 interface Props {
   message: ChatMessage;
@@ -25,6 +26,12 @@ function Verified({ faithfulness, sourceCount }: { faithfulness: number; sourceC
   );
 }
 
+function stageClass(s: StageEvent): string {
+  if (s.node.startsWith("repair")) return "progress-repair";
+  if (s.node === "refusal" || (s.node === "grounding_check" && s.step?.meta.ok === "False")) return "progress-bad";
+  return "";
+}
+
 export function MessageBubble({ message, onCiteClick, trace }: Props) {
   if (message.role === "user") {
     return (
@@ -36,12 +43,26 @@ export function MessageBubble({ message, onCiteClick, trace }: Props) {
   }
 
   if (message.kind === "pending") {
+    // Live progress from the stage stream. Stage names only, never draft
+    // text: nothing the model wrote is shown until it has been verified.
+    const last = message.stages[message.stages.length - 1];
     return (
-      <div className="card card-pending" role="status">
-        <span className="typing-dot" aria-hidden="true" />
-        <span className="typing-dot" aria-hidden="true" />
-        <span className="typing-dot" aria-hidden="true" />
-        <span className="sr-only">Sentinel is checking your documents…</span>
+      <div className="card card-progress" role="status" aria-live="polite">
+        <div className="progress-head">
+          <span className="spinner" aria-hidden="true" />
+          <span>{last ? `${last.label}…` : "Checking your documents…"}</span>
+        </div>
+        {message.stages.length > 0 && (
+          <ol className="progress-steps" aria-label="Completed steps">
+            {message.stages.map((s, i) => (
+              <li key={i} className={stageClass(s)}>
+                <Icon name={s.node.startsWith("repair") ? "refresh" : s.node === "refusal" ? "alert" : "check"} size={12} />
+                {s.label}
+                {s.attempt > 0 && <span className="progress-attempt">attempt {s.attempt + 1}</span>}
+              </li>
+            ))}
+          </ol>
+        )}
       </div>
     );
   }
@@ -70,6 +91,12 @@ export function MessageBubble({ message, onCiteClick, trace }: Props) {
         <div className="answer-footer">
           <FeedbackBar traceId={message.traceId} variant="refusal" />
         </div>
+        {trace && trace.steps.length > 0 && (
+          <details className="details">
+            <summary>Why it refused</summary>
+            <TraceGraph steps={trace.steps} />
+          </details>
+        )}
       </article>
     );
   }

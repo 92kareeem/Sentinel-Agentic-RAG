@@ -2,8 +2,11 @@
 
 Role in architecture: single source of truth for the three limits that turn
 a runaway agent loop into a controlled refusal instead of a stuck Lambda:
-attempt count, wall-clock deadline, and token budget.
+attempt count, wall-clock deadline, and token budget. Also the one place a
+model call is priced, and the one place the model can be downgraded for cost.
 """
+
+from __future__ import annotations
 
 import time
 from typing import Any
@@ -21,6 +24,34 @@ def check_budget(state: AgentState) -> bool:
     )
 
 
+def seconds_left(state: AgentState) -> float:
+    return max(0.0, state["deadline_ts"] - time.monotonic())
+
+
+def pick_model(state: AgentState) -> tuple[str, bool]:
+    """The model this node should actually call, and whether it was downgraded.
+
+    The router (ADR 0002) and repair_escalate choose state["model"] on quality
+    grounds. This applies a cost rule on top: when the remaining wall clock or
+    token budget is thin, the cheap model is used regardless, because a large
+    model that cannot finish inside the deadline produces a BUDGET_EXHAUSTED
+    refusal, which is strictly worse than a small model's verified answer.
+
+    Deterministic by design, like the router. A budget decision made by an LLM
+    would spend tokens on exactly the requests that have none to spare.
+    """
+    settings = get_settings()
+    chosen = state["model"]
+    cheap = settings.model_simple
+    if chosen == cheap:
+        return chosen, False
+    tight = (
+        seconds_left(state) < settings.downgrade_deadline_seconds
+        or state["token_budget_left"] < settings.downgrade_token_threshold
+    )
+    return (cheap, True) if tight else (chosen, False)
+
+
 def llm_call(state: AgentState, **kwargs: Any) -> tuple[str, int, int] | None:
     """An LLM call bounded by what remains of THIS request's wall clock.
 
@@ -28,21 +59,17 @@ def llm_call(state: AgentState, **kwargs: Any) -> tuple[str, int, int] | None:
     state refused — callers return immediately and the graph routes to
     refusal_node, which reports BUDGET_EXHAUSTED.
 
-    Why this exists at all: check_budget() above runs BETWEEN nodes, so a node
-    already inside a provider call could not be interrupted. Groq answers a
-    free-tier token-per-minute limit with a Retry-After measured in tens of
-    seconds, and the client retried three times per call across several nodes.
-    A 45-second budget was measured taking 285 seconds. In Lambda that is not a
-    slow answer — it is a function timeout and a 502 with no refusal at all.
-
     Every LLM call in the graph goes through here so the bound cannot be
-    forgotten at one call site, which is the same reason groq_client exists
-    rather than three copies of the retry logic.
+    forgotten at one call site, the estimated cost is accumulated on the trace
+    once, and provider selection lives in one module (llm/registry.py).
     """
-    from app.llm import groq_client
+    from app.llm import registry
+    from app.llm.base import LLMDeadlineError
 
     try:
-        return groq_client.chat_completion(deadline_ts=state["deadline_ts"], **kwargs)
-    except groq_client.GroqDeadlineError:
+        completion = registry.complete(deadline_ts=state["deadline_ts"], **kwargs)
+    except LLMDeadlineError:
         state["status"] = "refused"
         return None
+    state["trace"].add_cost(completion.cost_usd, completion.provider)
+    return completion.as_tuple

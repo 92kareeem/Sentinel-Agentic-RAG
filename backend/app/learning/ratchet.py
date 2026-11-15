@@ -283,6 +283,24 @@ def promote(
     return item
 
 
+def candidates(cases: list[Case], suite: RegressionSuite) -> list[Case]:
+    """Cases a person could promote, newest first.
+
+    Shared by evals/promote.py and the control plane so the CLI and the UI can
+    never disagree about what is reviewable. Excludes cases already in the
+    suite and diagnoses that are not quality signals.
+    """
+    promoted = {i.source.case_id for i in suite.active}
+    seen: set[str] = set()
+    out: list[Case] = []
+    for c in reversed(cases):
+        if c.case_id in promoted or c.case_id in seen or c.diagnosis in UNPROMOTABLE:
+            continue
+        seen.add(c.case_id)
+        out.append(c)
+    return out
+
+
 def lock(suite: RegressionSuite, item_id: str) -> RegressionItem:
     """pending -> enforced. The one-way step: from here a failure is a red CI."""
     item = _find(suite, item_id)

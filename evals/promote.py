@@ -38,11 +38,8 @@ SUITE_PATH = Path(__file__).resolve().parent / "regressions.json"
 
 
 def _candidates(owner: str, suite: ratchet.RegressionSuite) -> list[Case]:
-    promoted = {i.source.case_id for i in suite.active}
-    return [
-        c for c in reversed(casebook.list_for_owner(owner))  # newest first
-        if c.case_id not in promoted and c.diagnosis not in ratchet.UNPROMOTABLE
-    ]
+    # Same rule as the control plane's ratchet tab: ratchet.candidates().
+    return ratchet.candidates(casebook.list_for_owner(owner), suite)
 
 
 def cmd_list(args: argparse.Namespace) -> int:

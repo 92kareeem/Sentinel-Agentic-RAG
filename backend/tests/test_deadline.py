@@ -214,18 +214,20 @@ def test_the_graph_turns_a_deadline_into_a_retryable_refusal(
 def test_every_llm_call_in_the_graph_goes_through_the_bounded_helper() -> None:
     """A bound that one call site can forget is not a bound.
 
-    groq_client.chat_completion must be reached only via budget.llm_call, which
-    is the single place the deadline is attached.
+    Provider adapters live under app/llm and are reached only through
+    llm/registry.complete, which only agents/budget.llm_call may call — the
+    single place the deadline is attached. Any other module naming either
+    seam is an unbounded call waiting to happen.
     """
     import pathlib
 
     app = pathlib.Path(__file__).resolve().parents[1] / "app"
-    # groq_client.py declares it; budget.py is the one place allowed to call it.
-    allowed = {"llm/groq_client.py", "agents/budget.py"}
-    offenders = [
-        rel
-        for path in app.rglob("*.py")
-        if (rel := path.relative_to(app).as_posix()) not in allowed
-        and "chat_completion(" in path.read_text(encoding="utf-8")
-    ]
+    offenders: list[str] = []
+    for path in app.rglob("*.py"):
+        rel = path.relative_to(app).as_posix()
+        text = path.read_text(encoding="utf-8")
+        if rel.startswith("llm/") or rel == "agents/budget.py":
+            continue
+        if "chat_completion(" in text or "registry.complete(" in text:
+            offenders.append(rel)
     assert not offenders, f"unbounded LLM call sites: {offenders}"

@@ -6,8 +6,8 @@ lives in the conditional edges below, not scattered across node files — the
 whole self-healing state machine is readable in one place.
 """
 
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Mapping
+from typing import Any, cast
 
 from langgraph.graph import END, StateGraph
 
@@ -29,6 +29,12 @@ def grounding_check_node(state: AgentState) -> AgentState:
     """
     from app.agents.synthesizer import citations_for
     from app.guardrails import grounding
+
+    if not check_budget(state):
+        # The critic deducts after it spends, so this is the first node that
+        # can observe an overdrawn budget. Shipping would understate cost.
+        state["status"] = "refused"
+        return state
 
     # The user's question is passed so numbers echoed from it are not read as
     # fabrications: "is 20 days within the window?" invites an answer that
@@ -180,16 +186,32 @@ def _route_after_grounding(state: AgentState) -> str:
     return "refusal"
 
 
-def build_graph() -> Any:
+NodeFn = Callable[[AgentState], AgentState]
+
+
+def build_graph(overrides: Mapping[str, NodeFn] | None = None) -> Any:
+    """Compile the graph. `overrides` replaces named nodes and exists for one
+    reason: fault injection in the chaos demo (api/routes_demo.py), which
+    swaps the synthesizer for one that fabricates a number so the real
+    grounding gate and repair loop can be watched catching it. The edges —
+    the routing policy — can never be overridden."""
+    nodes: dict[str, NodeFn] = {
+        "router": router.router_node,
+        "retriever": retriever.retriever_node,
+        "synthesizer": synthesizer.synthesizer_node,
+        "critic": critic_mod.critic_node,
+        "repair_rewrite": repair.repair_rewrite_node,
+        "repair_escalate": repair.repair_escalate_node,
+        "grounding_check": grounding_check_node,
+        "refusal": refusal_node,
+    }
+    unknown = set(overrides or {}) - set(nodes)
+    if unknown:
+        raise ValueError(f"unknown graph node(s): {sorted(unknown)}")
+    nodes.update(overrides or {})
     g = StateGraph(AgentState)
-    g.add_node("router", router.router_node)
-    g.add_node("retriever", retriever.retriever_node)
-    g.add_node("synthesizer", synthesizer.synthesizer_node)
-    g.add_node("critic", critic_mod.critic_node)
-    g.add_node("repair_rewrite", repair.repair_rewrite_node)
-    g.add_node("repair_escalate", repair.repair_escalate_node)
-    g.add_node("grounding_check", grounding_check_node)
-    g.add_node("refusal", refusal_node)
+    for name, fn in nodes.items():
+        g.add_node(name, cast(Any, fn))
 
     g.set_entry_point("router")
     g.add_conditional_edges(

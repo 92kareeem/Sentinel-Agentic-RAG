@@ -1,12 +1,21 @@
 import { useId, useRef, useState } from "react";
 import { ApiError, uploadDocument } from "../api";
 import { useDialog } from "../lib/useDialog";
-import { DOCUMENT_ERROR_HELP } from "../types";
+import type { ClassificationLevel } from "../types";
+import { CLASSIFICATION_LEVELS, DOCUMENT_ERROR_HELP } from "../types";
 import { Icon } from "./Icon";
+
+export interface UploadContext {
+  // Set when the upload is fixing a knowledge gap: the topic is shown, and
+  // the questions are asked again once indexing finishes.
+  topic: string;
+  questions: string[];
+}
 
 interface Props {
   onClose: () => void;
   onUploaded: (docId: string) => void;
+  context?: UploadContext | null;
 }
 
 type Status = { kind: "idle" } | { kind: "busy"; stage: string } | { kind: "error"; msg: string };
@@ -15,13 +24,19 @@ type Status = { kind: "idle" } | { kind: "busy"; stage: string } | { kind: "erro
 // here, so they cannot disagree with each other again.
 const ACCEPT = ".pdf,.md,.txt";
 
-// Success closes the dialog and hands the new id back to App, which polls
-// the document list until processing finishes — the backend has no push
-// channel for lifecycle changes.
-export function UploadModal({ onClose, onUploaded }: Props) {
+const LEVEL_HELP: Record<ClassificationLevel, string> = {
+  PUBLIC: "Anyone in your organisation, including contractors",
+  INTERNAL: "Employees",
+  CONFIDENTIAL: "Confidential clearance and above",
+  RESTRICTED: "Restricted clearance only",
+};
+
+export function UploadModal({ onClose, onUploaded, context }: Props) {
   const input = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [dragOver, setDragOver] = useState(false);
+  const [classification, setClassification] = useState<ClassificationLevel>("INTERNAL");
+  const [roles, setRoles] = useState("");
   const busy = status.kind === "busy";
   // A dialog that is mid-upload should not vanish on Escape or a stray click
   // outside: the upload would carry on with nothing on screen to say so.
@@ -32,7 +47,17 @@ export function UploadModal({ onClose, onUploaded }: Props) {
 
   const handleFile = async (file: File) => {
     try {
-      const result = await uploadDocument(file, (stage) => setStatus({ kind: "busy", stage }));
+      const result = await uploadDocument(
+        file,
+        {
+          classification,
+          roles: roles
+            .split(",")
+            .map((r) => r.trim().toLowerCase())
+            .filter(Boolean),
+        },
+        (stage) => setStatus({ kind: "busy", stage }),
+      );
       onUploaded(result.doc_id);
     } catch (err) {
       let msg = "That document couldn't be uploaded. Please try again.";
@@ -55,9 +80,17 @@ export function UploadModal({ onClose, onUploaded }: Props) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="dialog-header">
-          <h2 id={titleId} className="dialog-title">
-            Upload a document
-          </h2>
+          <div>
+            <h2 id={titleId} className="dialog-title">
+              {context ? "Fill a knowledge gap" : "Upload a document"}
+            </h2>
+            {context && (
+              <p className="dialog-sub">
+                Readers asked: &ldquo;{context.topic}&rdquo;. Once this document is indexed, the question is asked again
+                so you can see it answered.
+              </p>
+            )}
+          </div>
           <button
             type="button"
             className="btn btn-ghost btn-icon dialog-close"
@@ -71,8 +104,7 @@ export function UploadModal({ onClose, onUploaded }: Props) {
 
         <div className="dialog-body">
           {/* A real button, so it is reachable with Tab and activated with
-              Enter or Space. It was a clickable <div>, which made uploading
-              impossible without a mouse. */}
+              Enter or Space. */}
           <button
             type="button"
             className={`dropzone${dragOver ? " is-dragging" : ""}`}
@@ -119,6 +151,33 @@ export function UploadModal({ onClose, onUploaded }: Props) {
               if (file) void handleFile(file);
             }}
           />
+
+          <fieldset className="access-fields" disabled={busy}>
+            <legend className="field-label">Who can read it</legend>
+            <label className="field">
+              <span className="field-label">Classification</span>
+              <select
+                className="select"
+                value={classification}
+                onChange={(e) => setClassification(e.target.value as ClassificationLevel)}
+              >
+                {CLASSIFICATION_LEVELS.map((l) => (
+                  <option key={l} value={l}>
+                    {l.charAt(0) + l.slice(1).toLowerCase()} — {LEVEL_HELP[l]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span className="field-label">Share with roles (optional, comma separated)</span>
+              <input
+                className="input"
+                value={roles}
+                placeholder="e.g. employee, finance — leave empty for only you and admins"
+                onChange={(e) => setRoles(e.target.value)}
+              />
+            </label>
+          </fieldset>
 
           {/* Progress is announced, not just drawn. */}
           <p className="sr-only" aria-live="polite">

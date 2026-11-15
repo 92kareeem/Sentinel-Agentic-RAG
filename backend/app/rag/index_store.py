@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -83,11 +84,33 @@ def build_faiss(vectors: np.ndarray) -> Any:
     return index
 
 
-def search(index: Any, query_vec: np.ndarray, k: int) -> list[tuple[int, float]]:
-    """Return [(row, score)] best-first. Row maps into the chunks list."""
+def search(
+    index: Any,
+    query_vec: np.ndarray,
+    k: int,
+    *,
+    allowed_rows: Collection[int] | None = None,
+) -> list[tuple[int, float]]:
+    """Return [(row, score)] best-first. Row maps into the chunks list.
+
+    allowed_rows, when given, is handed to FAISS as an IDSelector so rows
+    outside it are never scored — authorization happens inside the search,
+    not as a filter over a result list the excluded rows already shaped.
+    """
+    import faiss
+
     if index.ntotal == 0:
         return []
-    scores, rows = index.search(query_vec.reshape(1, -1), min(k, index.ntotal))
+    if allowed_rows is not None:
+        if not allowed_rows:
+            return []
+        ids = np.fromiter(sorted(allowed_rows), dtype=np.int64)
+        selector = faiss.IDSelectorBatch(ids)
+        # Some faiss builds type SearchParameters() as taking no kwargs.
+        params = faiss.SearchParameters(sel=selector)  # type: ignore[call-arg, unused-ignore]
+        scores, rows = index.search(query_vec.reshape(1, -1), min(k, len(ids)), params=params)
+    else:
+        scores, rows = index.search(query_vec.reshape(1, -1), min(k, index.ntotal))
     return [(int(r), float(s)) for r, s in zip(rows[0], scores[0], strict=True) if r >= 0]
 
 
@@ -147,7 +170,7 @@ def _write_pointer(root: Path, version: str, *, expected: str | None) -> None:
 
     The check-then-write below is not atomic against another OS process, which
     is why AWS mode additionally serializes publication through a DynamoDB
-    conditional update (see documents/ingest_lock.py). Within one process it
+    conditional update (see rag/index_lock.py). Within one process it
     is guarded by the caller's lock. The re-read here still catches the common
     case cheaply and keeps local development honest.
     """

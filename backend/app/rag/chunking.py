@@ -5,17 +5,25 @@ Role in architecture: converts raw documents (.md/.txt/.pdf) into Chunk records
 section_path, tables stay atomic, prose is windowed by token count with
 overlap, and chunk ids are deterministic so re-ingestion is idempotent.
 
+Each chunk also carries a provenance hash: sha256 over the document's
+checksum, the chunk's character span and its text. A client that holds the
+chunk and the document checksum can recompute it, which turns "trust us,
+this quote is from page 3" into something a reader can check.
+
 The tokenizer is injected as `Offsets = Callable[[str], list[tuple[int, int]]]`
 returning (char_start, char_end) per token: production injects the MiniLM fast
 tokenizer (embeddings.token_offsets); tests inject a plain word-splitter so the
 suite runs offline.
 """
 
+from __future__ import annotations
+
+import hashlib
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from app.models.schemas import Chunk, ChunkType
+from app.models.schemas import Chunk, ChunkType, ClassificationLevel
 
 Offsets = Callable[[str], list[tuple[int, int]]]
 
@@ -24,8 +32,15 @@ _TABLE_LINE_RE = re.compile(r"^\s*\|.*\|\s*$")
 
 
 def simple_word_offsets(text: str) -> list[tuple[int, int]]:
-    """Fallback/test tokenizer: one token per \\w+ run. No model download needed."""
+    """Fallback/test tokenizer: one token per \\S+ run. No model download needed."""
     return [(m.start(), m.end()) for m in re.finditer(r"\S+", text)]
+
+
+def provenance_hash(document_checksum: str, char_start: int, char_end: int, text: str) -> str:
+    """The recipe is deliberately trivial and stated in ChunkDetail.hash_recipe,
+    so any client in any language can verify a citation without this code."""
+    payload = f"{document_checksum}|{char_start}|{char_end}|{text}".encode()
+    return hashlib.sha256(payload).hexdigest()
 
 
 # ---------------------------------------------------------------- structure
@@ -167,6 +182,10 @@ def chunk_text(
     owner_id: str = "",
     source_filename: str = "",
     max_chunks: int | None = None,
+    tenant_id: str = "",
+    allowed_roles: Sequence[str] = (),
+    classification: ClassificationLevel = ClassificationLevel.PUBLIC,
+    document_checksum: str = "",
 ) -> list[Chunk]:
     """Chunk one parsed (markdown-ish) document into Chunk records.
 
@@ -181,7 +200,6 @@ def chunk_text(
         c_idx = 0
         for block_text, is_table, b_off in _split_blocks(body):
             base = s_off + b_off
-            page = _page_for_offset(page_marks, base)
 
             if is_table:  # tables are atomic regardless of size
                 spans = [(base, base + len(block_text), len(tokenize(block_text)))]
@@ -196,6 +214,10 @@ def chunk_text(
                 body_text = _strip_page_markers(raw)
                 if not body_text:  # a marker-only block strips to nothing
                     continue
+                # Per WINDOW, not per block. A block that runs across a page
+                # break used to stamp every window with the page it started
+                # on, so a citation could name page 1 for text on page 2.
+                page = _page_for_offset(page_marks, start)
                 chunks.append(
                     Chunk(
                         # page is part of the id so re-chunking a document whose
@@ -203,6 +225,11 @@ def chunk_text(
                         chunk_id=f"{doc_id}_p{page or 0}_s{s_idx}_c{c_idx}",
                         doc_id=doc_id,
                         owner_id=owner_id,
+                        tenant_id=tenant_id,
+                        allowed_roles=list(allowed_roles),
+                        classification=classification,
+                        provenance_hash=provenance_hash(document_checksum, start, end, body_text),
+                        document_checksum=document_checksum,
                         section_path=section_path,
                         text=body_text,
                         is_table=is_table,
@@ -250,6 +277,10 @@ def chunk_file(
     owner_id: str = "",
     source_filename: str = "",
     max_chunks: int | None = None,
+    tenant_id: str = "",
+    allowed_roles: Sequence[str] = (),
+    classification: ClassificationLevel = ClassificationLevel.PUBLIC,
+    document_checksum: str = "",
 ) -> list[Chunk]:
     """Chunk a .md/.txt/.pdf file under an explicit, caller-supplied doc_id.
 
@@ -266,4 +297,8 @@ def chunk_file(
         owner_id=owner_id,
         source_filename=source_filename or path.name,
         max_chunks=max_chunks,
+        tenant_id=tenant_id,
+        allowed_roles=allowed_roles,
+        classification=classification,
+        document_checksum=document_checksum,
     )

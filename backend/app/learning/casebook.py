@@ -423,6 +423,26 @@ def list_for_owner(owner_id: str, *, since: str | None = None) -> list[Case]:
     return sorted(cases, key=lambda c: c.created_at)
 
 
+def list_for_tenant(tenant_id: str, *, fallback_owner: str) -> list[Case]:
+    """Every case in one tenant, oldest first — the tenant admin's review queue.
+
+    Local storage reads the casebook file, which holds every owner's cases.
+    In AWS the casebook is partitioned by owner (one Query per owner, no scan),
+    so a tenant-wide read would mean a table scan on the request path; there it
+    returns the caller's own cases and promotion stays a CLI act anyway.
+    """
+    if not tenant_id or not get_settings().local_mode:
+        return list_for_owner(fallback_owner)
+    try:
+        with _local_lock:
+            rows = [r for r in _local_read_all() if r.get("tenant_id") == tenant_id]
+        cases = [Case(**{k: v for k, v in r.items() if k in Case.model_fields}) for r in rows]
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("casebook_read_failed", extra={"data": f"{type(exc).__name__}: {exc}"})
+        return []
+    return sorted(cases, key=lambda c: c.created_at)
+
+
 def reset_local() -> None:
     """Test helper: drop the local casebook."""
     if not get_settings().local_mode:

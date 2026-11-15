@@ -1,18 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, deleteDocument, getTrace, listDocuments, postQuery } from "./api";
+import {
+  ApiError,
+  apiKey,
+  deleteDocument,
+  getHealth,
+  getTrace,
+  listDocuments,
+  retryDocument,
+  setApiKey,
+  streamQuery,
+} from "./api";
+import { ChaosDemo } from "./components/ChaosDemo";
 import { ChatThread } from "./components/ChatThread";
 import { COMPOSER_ID, Composer } from "./components/Composer";
+import { type ControlTab, ControlPlane } from "./components/ControlPlane";
 import { Header } from "./components/Header";
-import { InsightsModal } from "./components/InsightsModal";
 import { Sidebar } from "./components/Sidebar";
 import { SourceDrawer } from "./components/SourceDrawer";
-import { UploadModal } from "./components/UploadModal";
+import { type UploadContext, UploadModal } from "./components/UploadModal";
 import type {
   ChatMessage,
   Citation,
   ConversationTurn,
   DocumentSummary,
+  Health,
+  KnowledgeGap,
   QueryResult,
+  StageEvent,
   TraceRecord,
 } from "./types";
 import { isRefusal } from "./types";
@@ -24,17 +38,8 @@ function uid(): string {
 const CITATION_TAG = /\s*\[chunk:[\w-]+\]/g;
 
 // What this turn should look like when it is sent back as conversation
-// history on the NEXT question.
-//
-// The raw response is the wrong thing to echo. A refusal's `reason` is the
-// literal control token "INSUFFICIENT_CONTEXT", and an answer is full of
-// [chunk:<id>] tags — feeding either back means the next prompt contains an
-// assistant turn that says something no human would say, spends tokens on
-// ids that are meaningless out of context, and invites the model to imitate
-// the tagging convention from history rather than from its instructions.
-//
-// History is background about what was discussed, never evidence, so a plain
-// readable sentence is exactly what belongs here.
+// history on the NEXT question: a plain readable sentence, never the
+// INSUFFICIENT_CONTEXT control token or [chunk:id] tags.
 function historyTurnFor(r: QueryResult): string {
   if (isRefusal(r)) return "I couldn't answer that from the available documents.";
   return r.answer.replace(CITATION_TAG, "").trim();
@@ -42,13 +47,16 @@ function historyTurnFor(r: QueryResult): string {
 
 export default function App() {
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
+  const [health, setHealth] = useState<Health | null>(null);
+  const [identity, setIdentity] = useState(apiKey());
   const [activeDocId, setActiveDocId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [traces, setTraces] = useState<Record<string, TraceRecord>>({});
   const [citation, setCitation] = useState<Citation | null>(null);
   const [loading, setLoading] = useState(false);
-  const [uploadOpen, setUploadOpen] = useState(false);
-  const [insightsOpen, setInsightsOpen] = useState(false);
+  const [upload, setUpload] = useState<{ context: UploadContext | null } | null>(null);
+  const [controlTab, setControlTab] = useState<ControlTab | null>(null);
+  const [chaosOpen, setChaosOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const historyRef = useRef<ConversationTurn[]>([]);
 
@@ -62,13 +70,15 @@ export default function App() {
 
   useEffect(() => {
     refreshDocuments();
-  }, [refreshDocuments]);
+    getHealth()
+      .then(setHealth)
+      .catch(() => setHealth(null));
+  }, [refreshDocuments, identity]);
 
   // Poll while anything is still processing — the backend has no push
-  // channel for lifecycle transitions, so this is the only way the sidebar
-  // status can move from PROCESSING to INDEXED/FAILED on its own.
+  // channel for lifecycle transitions.
   useEffect(() => {
-    const inFlight = documents.some((d) => d.status === "UPLOADING" || d.status === "UPLOADED" || d.status === "PROCESSING");
+    const inFlight = documents.some((d) => ["UPLOADING", "UPLOADED", "PROCESSING"].includes(d.status));
     if (!inFlight) return;
     const t = window.setInterval(refreshDocuments, 2000);
     return () => window.clearInterval(t);
@@ -78,19 +88,27 @@ export default function App() {
 
   const ask = async (query: string) => {
     const userMsg: ChatMessage = { id: uid(), role: "user", text: query };
-    const pendingMsg: ChatMessage = { id: uid(), role: "assistant", kind: "pending" };
-    setMessages((m) => [...m, userMsg, pendingMsg]);
+    const pendingId = uid();
+    setMessages((m) => [...m, userMsg, { id: pendingId, role: "assistant", kind: "pending", stages: [] }]);
     setLoading(true);
 
     const nextHistory = [...historyRef.current, { role: "user", content: query }];
+    const onStage = (stage: StageEvent) =>
+      setMessages((m) =>
+        m.map((msg) =>
+          msg.id === pendingId && msg.role === "assistant" && msg.kind === "pending"
+            ? { ...msg, stages: [...msg.stages, stage] }
+            : msg,
+        ),
+      );
 
     try {
-      const r = await postQuery(query, activeDocId, nextHistory);
+      const r = await streamQuery(query, activeDocId, historyRef.current, onStage);
       historyRef.current = [...nextHistory, { role: "assistant", content: historyTurnFor(r) }];
 
       const finalMsg: ChatMessage = isRefusal(r)
         ? {
-            id: pendingMsg.id,
+            id: pendingId,
             role: "assistant",
             kind: "refusal",
             reason: r.reason,
@@ -98,7 +116,7 @@ export default function App() {
             traceId: r.trace_id,
           }
         : {
-            id: pendingMsg.id,
+            id: pendingId,
             role: "assistant",
             kind: "answer",
             text: r.answer,
@@ -109,7 +127,7 @@ export default function App() {
             latencyMs: r.latency_ms,
             traceId: r.trace_id,
           };
-      setMessages((m) => m.map((msg) => (msg.id === pendingMsg.id ? finalMsg : msg)));
+      setMessages((m) => m.map((msg) => (msg.id === pendingId ? finalMsg : msg)));
 
       getTrace(r.trace_id)
         .then((t) => setTraces((prev) => ({ ...prev, [r.trace_id]: t })))
@@ -119,12 +137,14 @@ export default function App() {
       if (e instanceof ApiError && e.status === 429) {
         text = `Daily demo quota reached — resets ${
           e.retryAfter ? `in ~${Math.ceil(Number(e.retryAfter) / 3600)}h` : "at midnight UTC"
-        }. Thanks for trying Sentinel!`;
+        }.`;
+      } else if (e instanceof ApiError && e.status === 422) {
+        text = `Blocked by the input guardrails: ${e.detail}`;
       } else if (e instanceof ApiError) {
         text = e.detail || text;
       }
       setMessages((m) =>
-        m.map((msg) => (msg.id === pendingMsg.id ? { id: pendingMsg.id, role: "assistant", kind: "error", message: text } : msg)),
+        m.map((msg) => (msg.id === pendingId ? { id: pendingId, role: "assistant", kind: "error", message: text } : msg)),
       );
     } finally {
       setLoading(false);
@@ -133,17 +153,21 @@ export default function App() {
 
   const onDelete = async (doc: DocumentSummary) => {
     // Deleting removes the document from every future answer and cannot be
-    // undone from here, so it asks first. The button sits right next to the
-    // row you click to select a document — an easy miss on a touch screen.
+    // undone from here, so it asks first.
     if (!window.confirm(`Delete ${doc.filename}? It will no longer be used to answer questions.`)) return;
     try {
       await deleteDocument(doc.document_id);
       if (activeDocId === doc.document_id) setActiveDocId(null);
+    } finally {
       refreshDocuments();
-    } catch {
-      // Surfacing this inline would need its own toast primitive; the
-      // sidebar simply keeps showing the document, which is an accurate
-      // reflection of "deletion did not take effect".
+    }
+  };
+
+  const onRetry = async (doc: DocumentSummary) => {
+    try {
+      await retryDocument(doc.document_id);
+    } finally {
+      refreshDocuments();
     }
   };
 
@@ -151,10 +175,28 @@ export default function App() {
     setMessages([]);
     setTraces({});
     historyRef.current = [];
-    // The "New chat" button disappears with the conversation, which would
-    // leave keyboard focus on nothing; put it where the next question goes.
     document.getElementById(COMPOSER_ID)?.focus();
   };
+
+  const switchIdentity = (key: string) => {
+    // A different identity sees different documents, so the conversation and
+    // any scope that pointed at the old identity's documents start fresh.
+    setApiKey(key);
+    setIdentity(key);
+    setActiveDocId(null);
+    newChat();
+  };
+
+  // "Upload the missing document & re-verify": close the control plane, take
+  // the upload, then ask the gap's question again in the chat — the reader
+  // watches the refusal turn into a cited answer.
+  const fixGap = (gap: KnowledgeGap) => {
+    setControlTab(null);
+    setUpload({ context: { topic: gap.topic, questions: gap.example_questions.slice(0, 1) } });
+  };
+
+  const hasCorpus =
+    documents.some((d) => d.status !== "DELETED") || (health !== null && health.index_version !== "absent");
 
   return (
     <div className="shell">
@@ -165,9 +207,19 @@ export default function App() {
         onMenuClick={() => setSidebarOpen(true)}
         menuOpen={sidebarOpen}
         onNewChat={newChat}
-        onInsightsClick={() => setInsightsOpen(true)}
+        onControlPlane={() => setControlTab("telemetry")}
+        onChaos={health?.demo_mode ? () => setChaosOpen(true) : null}
         hasMessages={messages.length > 0}
+        identity={identity}
+        onIdentityChange={switchIdentity}
       />
+
+      {health && !health.llm_configured && (
+        <p className="banner" role="status">
+          No LLM key configured for <strong>{health.llm_provider}</strong>: answers will fail until you set one in{" "}
+          <code>.env</code>. The chaos demo still runs, with simulated model calls.
+        </p>
+      )}
 
       <div className="layout">
         <Sidebar
@@ -181,9 +233,10 @@ export default function App() {
             // Close the phone sidebar first: two overlays stacked means two
             // focus traps fighting over the keyboard.
             setSidebarOpen(false);
-            setUploadOpen(true);
+            setUpload({ context: null });
           }}
           onDelete={onDelete}
+          onRetry={onRetry}
           open={sidebarOpen}
           onCloseMobile={() => setSidebarOpen(false)}
         />
@@ -193,7 +246,7 @@ export default function App() {
             messages={messages}
             traces={traces}
             onCiteClick={setCitation}
-            hasDocuments={documents.some((d) => d.status !== "DELETED")}
+            hasDocuments={hasCorpus}
             onExample={ask}
             busy={loading}
           />
@@ -206,17 +259,26 @@ export default function App() {
         </main>
       </div>
 
-      {uploadOpen && (
+      {upload && (
         <UploadModal
-          onClose={() => setUploadOpen(false)}
+          context={upload.context}
+          onClose={() => setUpload(null)}
           onUploaded={() => {
-            setUploadOpen(false);
+            const questions = upload.context?.questions ?? [];
+            setUpload(null);
             refreshDocuments();
+            setActiveDocId(null);
+            // Re-verify: ask the question that used to be refused.
+            if (questions[0]) void ask(questions[0]);
           }}
         />
       )}
 
-      {insightsOpen && <InsightsModal onClose={() => setInsightsOpen(false)} />}
+      {controlTab && (
+        <ControlPlane initialTab={controlTab} onClose={() => setControlTab(null)} onFixGap={fixGap} />
+      )}
+
+      {chaosOpen && <ChaosDemo onClose={() => setChaosOpen(false)} />}
 
       <SourceDrawer citation={citation} onClose={() => setCitation(null)} />
     </div>

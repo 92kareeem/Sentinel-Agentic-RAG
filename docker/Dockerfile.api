@@ -1,0 +1,59 @@
+# Sentinel API for docker compose and any container host (not Lambda — see
+# Dockerfile.lambda). Same dependency set as the Lambda image: no torch, the
+# quantized ONNX MiniLM produces the same vectors in ~60 MB instead of ~1.5 GB.
+#
+# On first start the entrypoint indexes ./corpus into the data volume, so a
+# fresh `docker compose up` answers questions without any manual step.
+
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+COPY docker/requirements-lambda.txt /tmp/requirements.txt
+RUN pip install -r /tmp/requirements.txt "uvicorn[standard]~=0.32"
+
+# Pinned to a commit, not a branch: a moved model would silently produce
+# embeddings that no longer match an index built with the old one.
+ARG ONNX_REPO=Xenova/all-MiniLM-L6-v2
+ARG ONNX_REVISION=751bff37182d3f1213fa05d7196b954e230abad9
+RUN pip install "huggingface-hub~=0.26" \
+ && python -c "\
+from huggingface_hub import hf_hub_download; import shutil, os;\
+os.makedirs('/opt/onnx', exist_ok=True);\
+[shutil.copyfile(hf_hub_download('${ONNX_REPO}', r, revision='${ONNX_REVISION}'), f'/opt/onnx/{n}')\
+ for r, n in [('onnx/model_quantized.onnx','model_quantized.onnx'), ('tokenizer.json','tokenizer.json')]]" \
+ && pip uninstall -y huggingface-hub
+
+COPY backend/app ./app
+COPY backend/ingestion ./ingestion
+COPY corpus ./corpus
+COPY evals/regressions.json ./evals/regressions.json
+COPY docker/entrypoint.sh /usr/local/bin/sentinel-entrypoint
+# A Windows checkout can turn LF into CRLF, and a shebang ending in \r is
+# "file not found" inside the container. Normalise here as well as in
+# .gitattributes, so the image builds from any checkout.
+RUN sed -i 's/\r$//' /usr/local/bin/sentinel-entrypoint \
+ && chmod +x /usr/local/bin/sentinel-entrypoint \
+ && useradd --create-home --uid 1000 sentinel \
+ && mkdir -p /data \
+ && chown -R sentinel /data /app/evals
+
+ENV EMBED_BACKEND=onnx \
+    ONNX_MODEL_DIR=/opt/onnx \
+    STORAGE_BACKEND=local \
+    INDEX_DIR=/data/index \
+    REGRESSIONS_PATH=/app/evals/regressions.json \
+    PYTHONPATH=/app
+
+USER sentinel
+EXPOSE 8000
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=60s --retries=6 \
+  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2).status == 200 else 1)"
+
+ENTRYPOINT ["sentinel-entrypoint"]
