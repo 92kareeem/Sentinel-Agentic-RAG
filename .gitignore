@@ -30,3 +30,6 @@ models/onnx/
 
 # generated documentation artifact (rebuild locally, not source)
 Sentinel-Architecture-and-Documentation.pdf
+
+# raw load-test output (the published summary lives in docs/benchmarks/)
+benchmarks/results/

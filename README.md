@@ -152,6 +152,31 @@ python evals/promote.py retire R001 --reason "policy changed"
 
 The eval workflow runs nightly and on PRs labelled `run-evals`. Every PR runs the unit suites, lint, types, the frontend build, the Lambda image build and start, and a `docker compose up` smoke test that asserts every chaos scenario is caught.
 
+### Load test
+
+Measured with JMeter against one API process capped at 2 CPUs, with a stand-in model
+answering in 300 ms so the numbers are Sentinel's own cost, not a provider's rate limit
+([method](benchmarks/README.md), [full report](docs/benchmarks/2026-11-15/README.md)).
+A rate counts as sustained when errors stay at or under 1% and p95 stays under 250 ms
+(no model call) or 2 s (full answer).
+
+| Scenario | Sustained | p95 at that rate |
+|---|---:|---:|
+| Health check | 989/s | 114 ms |
+| Prompt injection blocked before any model call | 989/s | 56 ms |
+| Repeated question, served from the verified-answer cache | 248/s | 13 ms |
+| New question, full verified answer (retrieval, two model calls, grounding gate) | 49/s | 1.6 s |
+| New question, streamed | 39/s | 1.0 s |
+
+The first run found full answers capped at 10/s: every model call built a new HTTP
+client (SSL context, DNS, TCP connect), and the embedding engine spun eight threads in
+a two-CPU container. Fixing both cut CPU per answer from ~140 ms to ~23 ms, which
+raised full answers to 49/s, five times the original rate.
+
+```bash
+make bench           # needs Java 17+ and JMeter 5.6+; ~20 minutes
+```
+
 ---
 
 ## Choose your model
@@ -262,8 +287,9 @@ backend/app/learning/      casebook (failures → work list) and ratchet (fixes 
 backend/app/api/           query pipeline, streaming, control plane, documents, chaos demo
 frontend/                  React + TypeScript UI and control plane
 evals/                     golden set, regression suite, judge prompts, promotion CLI
+benchmarks/                JMeter load test, stand-in model, runner and report builder
 corpus/                    the sample business documents that get indexed
-docs/                      system guide, ADRs, learning path (never indexed)
+docs/                      system guide, ADRs, learning path, benchmark reports (never indexed)
 docker/ · infra/           compose images, Lambda image, idempotent AWS deploy
 ```
 
