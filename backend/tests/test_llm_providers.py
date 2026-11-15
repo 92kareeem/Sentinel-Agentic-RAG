@@ -44,7 +44,9 @@ class _Capture:
     def __exit__(self, *_: Any) -> None:
         return None
 
-    def post(self, url: str, *, json: dict[str, Any], headers: dict[str, str]) -> _Resp:
+    def post(
+        self, url: str, *, json: dict[str, Any], headers: dict[str, str], timeout: float
+    ) -> _Resp:
         self.calls.append({"url": url, "json": json, "headers": headers})
         return self.responses.pop(0) if len(self.responses) > 1 else self.responses[0]
 
@@ -95,6 +97,28 @@ def test_openai_adapter_uses_bearer_auth_and_chat_completions(monkeypatch) -> No
     assert call["url"] == "https://api.openai.com/v1/chat/completions"
     assert call["headers"]["Authorization"] == "Bearer sk_test"
     assert call["json"]["model"] == "gpt-4o-mini"
+
+
+def test_calls_reuse_one_pooled_client_and_bound_each_attempt(monkeypatch) -> None:
+    """A client per call rebuilt an SSL context and reconnected every time:
+    ~40% of the API's CPU under load. One pooled client serves every call,
+    and the per-attempt timeout still travels with each request."""
+    built: list[dict[str, Any]] = []
+    timeouts: list[float] = []
+
+    class _Client:
+        def __init__(self, **kw: Any) -> None:
+            built.append(kw)
+
+        def post(self, url: str, **kw: Any) -> _Resp:
+            timeouts.append(kw["timeout"])
+            return _openai_ok()
+
+    monkeypatch.setattr("app.llm.http_chat.httpx.Client", _Client)
+    for _ in range(3):
+        openai_client.chat_completion("m", [{"role": "user", "content": "q"}])
+    assert len(built) == 1 and "limits" in built[0]
+    assert len(timeouts) == 3 and all(0 < t <= 15.0 for t in timeouts)
 
 
 def test_openai_json_mode_requests_a_json_object(monkeypatch) -> None:

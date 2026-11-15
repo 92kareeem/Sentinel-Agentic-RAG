@@ -96,6 +96,11 @@ class Settings(BaseSettings):
     # instead of ~1.5 GB)
     embed_backend: str = "torch"
     onnx_model_dir: Path = Path("models/onnx")
+    # Threads per ONNX inference. A query embeds one short sentence and many
+    # requests run at once, so parallelism belongs across requests, not inside
+    # one: the default (a thread per host core) oversubscribes a CPU-limited
+    # container or a 1-vCPU Lambda and burns cycles spin-waiting.
+    embed_threads: int = 1
     index_dir: Path = Path("index")
     chunk_size_tokens: int = 256  # matches all-MiniLM-L6-v2 max seq length
     chunk_overlap_tokens: int = 48

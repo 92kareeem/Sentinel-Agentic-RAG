@@ -88,7 +88,14 @@ def _get_onnx() -> tuple[Any, Any]:
                 from tokenizers import Tokenizer
 
                 d = get_settings().onnx_model_dir
-                session = onnxruntime.InferenceSession(str(d / "model_quantized.onnx"))
+                opts = onnxruntime.SessionOptions()
+                opts.intra_op_num_threads = get_settings().embed_threads
+                opts.inter_op_num_threads = 1
+                # Idle threads sleep instead of spinning between requests.
+                opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
+                session = onnxruntime.InferenceSession(
+                    str(d / "model_quantized.onnx"), sess_options=opts
+                )
                 tokenizer = Tokenizer.from_file(str(d / "tokenizer.json"))
                 tokenizer.enable_truncation(max_length=256)  # all-MiniLM-L6-v2 real max
                 _onnx = (session, tokenizer)
