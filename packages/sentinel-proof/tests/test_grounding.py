@@ -7,7 +7,7 @@ here runs offline: no model, no network.
 
 from __future__ import annotations
 
-from sentinel_verify import MAX_STRIPPED_RATIO, ClaimStatus, Passage, RefusalReason, verify
+from sentinel_proof import MAX_STRIPPED_RATIO, ClaimStatus, Passage, RefusalReason, verify
 
 
 def _p(pid: str, text: str, section: str = "Policy") -> Passage:

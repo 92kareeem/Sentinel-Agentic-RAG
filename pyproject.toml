@@ -35,9 +35,9 @@ dependencies = [
     "numpy~=2.1",
     "python-multipart~=0.0.12",
     # The grounding gate, as the standalone Apache-2.0 package in
-    # packages/sentinel-verify. Resolved from the workspace here; pip-based
+    # packages/sentinel-proof. Resolved from the workspace here; pip-based
     # installs (CI, Docker, `make install`) install that directory explicitly.
-    "sentinel-verify>=0.1.0",
+    "sentinel-proof>=0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -86,4 +86,4 @@ mypy_path = "backend"
 members = ["packages/*"]
 
 [tool.uv.sources]
-sentinel-verify = { workspace = true }
+sentinel-proof = { workspace = true }

@@ -19,7 +19,7 @@ jobs:
         run: |
           pip install ruff mypy pydantic pydantic-settings fastapi mangum httpx \
             boto3 langgraph rank-bm25 numpy python-multipart pytest moto[dynamodb] \
-            ./packages/sentinel-verify
+            ./packages/sentinel-proof
       - name: Ruff
         run: ruff check backend
       - name: Mypy
@@ -40,7 +40,7 @@ jobs:
       - name: Install (CPU torch — the tests exercise real embeddings/FAISS)
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -e ./packages/sentinel-verify -e ".[dev]"
+          pip install -e ./packages/sentinel-proof -e ".[dev]"
       - name: Pytest
         run: pytest backend/tests -q
         env:

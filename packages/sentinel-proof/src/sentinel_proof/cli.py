@@ -1,8 +1,8 @@
-"""``sentinel-verify``: run the gate from a shell or a CI step.
+"""``sentinel-proof``: run the gate from a shell or a CI step.
 
-    sentinel-verify check --answer answer.txt --passages passages.json
-    sentinel-verify check --answer answer.txt --passages passages.json --numeric --json
-    echo "Refunds take 30 days [1]." | sentinel-verify check --passages passages.json --numeric
+    sentinel-proof check --answer answer.txt --passages passages.json
+    sentinel-proof check --answer answer.txt --passages passages.json --numeric --json
+    echo "Refunds take 30 days [1]." | sentinel-proof check --passages passages.json --numeric
 
 ``passages.json`` is a list of strings, or a list of objects with ``text`` and
 any other :class:`Passage` field. Exit code 0 when the answer is verified,
@@ -78,7 +78,7 @@ def _print_human(v: Verdict) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="sentinel-verify", description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(prog="sentinel-proof", description=__doc__.split("\n\n")[0])
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command", required=True)
 

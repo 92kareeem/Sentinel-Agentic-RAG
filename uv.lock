@@ -9,7 +9,7 @@ resolution-markers = [
 [manifest]
 members = [
     "sentinel",
-    "sentinel-verify",
+    "sentinel-proof",
 ]
 
 [[package]]
@@ -1915,7 +1915,7 @@ dependencies = [
     { name = "python-multipart" },
     { name = "rank-bm25" },
     { name = "sentence-transformers" },
-    { name = "sentinel-verify" },
+    { name = "sentinel-proof" },
     { name = "transformers" },
 ]
 
@@ -1951,16 +1951,16 @@ requires-dist = [
     { name = "rank-bm25", specifier = "~=0.2.2" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "~=0.8" },
     { name = "sentence-transformers", specifier = ">=6.1,<7" },
-    { name = "sentinel-verify", editable = "packages/sentinel-verify" },
+    { name = "sentinel-proof", editable = "packages/sentinel-proof" },
     { name = "transformers", specifier = ">=5.10.0" },
     { name = "uvicorn", marker = "extra == 'dev'", specifier = "~=0.32" },
 ]
 provides-extras = ["dev"]
 
 [[package]]
-name = "sentinel-verify"
+name = "sentinel-proof"
 version = "0.1.0"
-source = { editable = "packages/sentinel-verify" }
+source = { editable = "packages/sentinel-proof" }
 
 [package.optional-dependencies]
 dev = [
