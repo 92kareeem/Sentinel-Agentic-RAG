@@ -16,7 +16,7 @@ PY := $(VENV)/bin/python
 endif
 
 .PHONY: help up down reset logs demo dev serve web venv install ingest smoke test \
-        test-web lint check eval regressions deploy
+        test-web lint check eval regressions deploy bench bench-up bench-down
 
 help:
 	@grep -E '^# ' Makefile | head -6 | sed 's/^# //'
@@ -89,3 +89,19 @@ regressions:
 
 deploy:
 	bash infra/deploy.sh
+
+# ------------------------------------------------------------------ load test
+# JMeter 5.6+ and Java 17+ on this machine; see benchmarks/README.md.
+# BUILDX_BAKE_ENTITLEMENTS_FS=0: Compose v5 on Windows otherwise refuses to
+# read a Dockerfile in a subdirectory of the build context.
+
+BENCH := docker compose -f benchmarks/compose.bench.yml
+
+bench-up:
+	BUILDX_BAKE_ENTITLEMENTS_FS=0 $(BENCH) up -d --build --wait
+
+bench-down:
+	$(BENCH) down -v
+
+bench: bench-up
+	$(PY) benchmarks/run.py $(ARGS)

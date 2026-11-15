@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="340" viewBox="0 0 760 340" role="img" aria-label="New question, streamed: p95 latency as load rises">
+<title>New question, streamed: p95 latency as load rises</title>
+<style>
+  .bg{fill:#fcfcfb} .t1{fill:#0b0b0b} .t2{fill:#52514e} .grid{stroke:#e4e3df} .ref{stroke:#52514e}
+  .s1{fill:#2a78d6} .s2{fill:#eb6834} .l1{stroke:#2a78d6} .l2{stroke:#eb6834} .ring{stroke:#fcfcfb}
+  @media (prefers-color-scheme: dark){
+    .bg{fill:#1a1a19} .t1{fill:#f0efec} .t2{fill:#c3c2b7} .grid{stroke:#383835} .ref{stroke:#c3c2b7}
+    .s1{fill:#3987e5} .s2{fill:#d95926} .l1{stroke:#3987e5} .l2{stroke:#d95926}
+    .ring{stroke:#1a1a19}
+  }
+  text{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif}
+</style>
+<rect class="bg" width="760" height="340" rx="8"/>
+<text class="t1" x="20" y="28" font-size="15" font-weight="600">New question, streamed: p95 latency as load rises</text>
+<rect class="s1" x="20" y="41" width="10" height="10" rx="2"/>
+<text class="t2" x="35" y="50" font-size="12">Before</text>
+<rect class="s2" x="86" y="41" width="10" height="10" rx="2"/>
+<text class="t2" x="101" y="50" font-size="12">After</text>
+<line class="grid" x1="70" y1="294.0" x2="730" y2="294.0" stroke-width="1"/>
+<text class="t2" x="62" y="298.0" font-size="11" text-anchor="end">0 s</text>
+<line class="grid" x1="70" y1="236.5" x2="730" y2="236.5" stroke-width="1"/>
+<text class="t2" x="62" y="240.5" font-size="11" text-anchor="end">2 s</text>
+<line class="grid" x1="70" y1="179.0" x2="730" y2="179.0" stroke-width="1"/>
+<text class="t2" x="62" y="183.0" font-size="11" text-anchor="end">4 s</text>
+<line class="grid" x1="70" y1="121.5" x2="730" y2="121.5" stroke-width="1"/>
+<text class="t2" x="62" y="125.5" font-size="11" text-anchor="end">6 s</text>
+<line class="grid" x1="70" y1="64.0" x2="730" y2="64.0" stroke-width="1"/>
+<text class="t2" x="62" y="68.0" font-size="11" text-anchor="end">8 s</text>
+<line class="ref" x1="70" y1="236.5" x2="730" y2="236.5" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text class="t2" x="726" y="230.5" font-size="11" text-anchor="end">p95 target 2 s</text>
+<text class="t2" x="125.0" y="312" font-size="11" text-anchor="middle">5</text>
+<text class="t2" x="235.0" y="312" font-size="11" text-anchor="middle">10</text>
+<text class="t2" x="345.0" y="312" font-size="11" text-anchor="middle">20</text>
+<text class="t2" x="455.0" y="312" font-size="11" text-anchor="middle">30</text>
+<text class="t2" x="565.0" y="312" font-size="11" text-anchor="middle">40</text>
+<text class="t2" x="675.0" y="312" font-size="11" text-anchor="middle">50</text>
+<text class="t2" x="400.0" y="332" font-size="11" text-anchor="middle">offered load (requests/second)</text>
+<path class="l1" d="M125.0,272.9 L235.0,270.7 L345.0,163.8" fill="none" stroke-width="2" stroke-linejoin="round"/>
+<circle class="s1 ring" cx="125.0" cy="272.9" r="4.5" stroke-width="2"/>
+<circle class="s1 ring" cx="235.0" cy="270.7" r="4.5" stroke-width="2"/>
+<circle class="s1 ring" cx="345.0" cy="163.8" r="4.5" stroke-width="2"/>
+<text class="t2" x="353.0" y="155.8" font-size="11">Before</text>
+<path class="l2" d="M125.0,273.5 L235.0,273.1 L345.0,273.1 L455.0,272.8 L565.0,265.2 L675.0,84.3" fill="none" stroke-width="2" stroke-linejoin="round"/>
+<circle class="s2 ring" cx="125.0" cy="273.5" r="4.5" stroke-width="2"/>
+<circle class="s2 ring" cx="235.0" cy="273.1" r="4.5" stroke-width="2"/>
+<circle class="s2 ring" cx="345.0" cy="273.1" r="4.5" stroke-width="2"/>
+<circle class="s2 ring" cx="455.0" cy="272.8" r="4.5" stroke-width="2"/>
+<circle class="s2 ring" cx="565.0" cy="265.2" r="4.5" stroke-width="2"/>
+<circle class="s2 ring" cx="675.0" cy="84.3" r="4.5" stroke-width="2"/>
+<text class="t2" x="683.0" y="76.3" font-size="11">After</text>
+</svg>

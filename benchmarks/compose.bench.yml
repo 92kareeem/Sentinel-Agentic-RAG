@@ -1,0 +1,64 @@
+# The benchmark stack: Sentinel's API plus a stand-in LLM, nothing else.
+#
+#   docker compose -f benchmarks/compose.bench.yml up -d --build --wait
+#
+# A separate project (own containers, own data volume, port 8100), so a load
+# test never writes thousands of traces into your normal local stack.
+#
+# The API container is capped at BENCH_API_CPUS (default 2) so results are
+# comparable between machines and the load generator on the same host keeps
+# its own cores. The model is benchmarks/mock_llm.py: real Sentinel, fake
+# network hop to a model (see that file for why).
+
+name: sentinel-bench
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    environment:
+      STORAGE_BACKEND: local
+      INDEX_DIR: /data/index
+      EMBED_BACKEND: onnx
+      ONNX_MODEL_DIR: /opt/onnx
+      INDEX_REFRESH_SECONDS: "0"
+      LLM_PROVIDER: local
+      LOCAL_LLM_BASE_URL: http://mock-llm:9000/v1
+      LOCAL_MODEL_SIMPLE: mock-small
+      LOCAL_MODEL_COMPLEX: mock-large
+    ports:
+      - "8100:8000"
+    volumes:
+      - bench-data:/data
+    cpus: ${BENCH_API_CPUS:-2}
+    depends_on:
+      mock-llm:
+        condition: service_healthy
+
+  mock-llm:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    entrypoint: []
+    command:
+      [
+        "uvicorn", "mock_llm:app", "--app-dir", "/bench",
+        "--host", "0.0.0.0", "--port", "9000", "--no-access-log",
+      ]
+    environment:
+      MOCK_LATENCY_MS: ${MOCK_LATENCY_MS:-300}
+    volumes:
+      - ./mock_llm.py:/bench/mock_llm.py:ro
+    healthcheck:
+      test:
+        [
+          "CMD", "python", "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=2)",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  bench-data:

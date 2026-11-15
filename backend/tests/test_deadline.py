@@ -141,16 +141,11 @@ def test_the_http_timeout_never_exceeds_what_the_request_can_afford(
     seen: list[float] = []
 
     class _Client:
-        def __init__(self, **kw: Any) -> None:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        def post(self, *_: Any, **kw: Any) -> None:
             seen.append(kw["timeout"])
-
-        def __enter__(self) -> _Client:
-            return self
-
-        def __exit__(self, *_: Any) -> None:
-            return None
-
-        def post(self, *_: Any, **__: Any) -> None:
             raise httpx.ConnectError("boom")
 
     monkeypatch.setattr(groq_client.httpx, "Client", _Client)
@@ -171,16 +166,11 @@ def test_an_unbounded_call_keeps_the_fixed_ceiling(monkeypatch: pytest.MonkeyPat
     seen: list[float] = []
 
     class _Client:
-        def __init__(self, **kw: Any) -> None:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        def post(self, *_: Any, **kw: Any) -> None:
             seen.append(kw["timeout"])
-
-        def __enter__(self) -> _Client:
-            return self
-
-        def __exit__(self, *_: Any) -> None:
-            return None
-
-        def post(self, *_: Any, **__: Any) -> None:
             raise httpx.ConnectError("boom")
 
     monkeypatch.setattr(groq_client.httpx, "Client", _Client)

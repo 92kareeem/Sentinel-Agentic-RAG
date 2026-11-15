@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="238" viewBox="0 0 760 238" role="img" aria-label="Highest sustained rate, no model call (req/s)">
+<title>Highest sustained rate, no model call (req/s)</title>
+<style>
+  .bg{fill:#fcfcfb} .t1{fill:#0b0b0b} .t2{fill:#52514e} .grid{stroke:#e4e3df} .ref{stroke:#52514e}
+  .s1{fill:#2a78d6} .s2{fill:#eb6834} .l1{stroke:#2a78d6} .l2{stroke:#eb6834} .ring{stroke:#fcfcfb}
+  @media (prefers-color-scheme: dark){
+    .bg{fill:#1a1a19} .t1{fill:#f0efec} .t2{fill:#c3c2b7} .grid{stroke:#383835} .ref{stroke:#c3c2b7}
+    .s1{fill:#3987e5} .s2{fill:#d95926} .l1{stroke:#3987e5} .l2{stroke:#d95926}
+    .ring{stroke:#1a1a19}
+  }
+  text{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif}
+</style>
+<rect class="bg" width="760" height="238" rx="8"/>
+<text class="t1" x="20" y="28" font-size="15" font-weight="600">Highest sustained rate, no model call (req/s)</text>
+<rect class="s1" x="20" y="41" width="10" height="10" rx="2"/>
+<text class="t2" x="35" y="50" font-size="12">Before</text>
+<rect class="s2" x="86" y="41" width="10" height="10" rx="2"/>
+<text class="t2" x="101" y="50" font-size="12">After</text>
+<line class="grid" x1="230.0" y1="58" x2="230.0" y2="212" stroke-width="1"/>
+<text class="t2" x="230.0" y="228" font-size="11" text-anchor="middle">0</text>
+<line class="grid" x1="322.0" y1="58" x2="322.0" y2="212" stroke-width="1"/>
+<text class="t2" x="322.0" y="228" font-size="11" text-anchor="middle">250</text>
+<line class="grid" x1="414.0" y1="58" x2="414.0" y2="212" stroke-width="1"/>
+<text class="t2" x="414.0" y="228" font-size="11" text-anchor="middle">500</text>
+<line class="grid" x1="506.0" y1="58" x2="506.0" y2="212" stroke-width="1"/>
+<text class="t2" x="506.0" y="228" font-size="11" text-anchor="middle">750</text>
+<line class="grid" x1="598.0" y1="58" x2="598.0" y2="212" stroke-width="1"/>
+<text class="t2" x="598.0" y="228" font-size="11" text-anchor="middle">1,000</text>
+<line class="grid" x1="690.0" y1="58" x2="690.0" y2="212" stroke-width="1"/>
+<text class="t2" x="690.0" y="228" font-size="11" text-anchor="middle">1,250</text>
+<text class="t1" x="220" y="83.0" font-size="12" text-anchor="end">Health check</text>
+<path class="s1" d="M230.0,64.0 h367.0 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-367.0 z"/>
+<text class="t2" x="607.0" y="75" font-size="11">1,008</text>
+<path class="s2" d="M230.0,80.0 h360.1 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-360.1 z"/>
+<text class="t2" x="600.1" y="91" font-size="11">989</text>
+<text class="t1" x="220" y="131.0" font-size="12" text-anchor="end">Prompt injection blocked</text>
+<path class="s1" d="M230.0,112.0 h361.8 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-361.8 z"/>
+<text class="t2" x="601.8" y="123" font-size="11">994</text>
+<path class="s2" d="M230.0,128.0 h360.0 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-360.0 z"/>
+<text class="t2" x="600.0" y="139" font-size="11">989</text>
+<text class="t1" x="220" y="179.0" font-size="12" text-anchor="end">Repeated question (cache hit)</text>
+<path class="s1" d="M230.0,160.0 h86.8 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-86.8 z"/>
+<text class="t2" x="326.8" y="171" font-size="11">247</text>
+<path class="s2" d="M230.0,176.0 h87.3 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-87.3 z"/>
+<text class="t2" x="327.3" y="187" font-size="11">248</text>
+</svg>

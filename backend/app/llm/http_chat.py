@@ -16,6 +16,7 @@ that is a function timeout and a 502 with no refusal at all.
 from __future__ import annotations
 
 import random
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -29,6 +30,30 @@ from app.llm.base import LLMDeadlineError, LLMRequestError, breaker_for
 # Ceiling on any single HTTP attempt, independent of the caller's deadline. A
 # request that has not answered in this long is not about to.
 MAX_CALL_SECONDS = 15.0
+
+# One pooled client per process, so calls reuse keep-alive connections.
+# Building a client creates an SSL context, and a fresh connection pays DNS,
+# TCP and (to any hosted provider) a TLS handshake; under load that was ~40%
+# of the API's CPU and a handshake's latency added to every model call
+# (docs/benchmarks). httpx.Client is thread-safe; the per-attempt timeout is
+# passed per request. Keyed by the factory so a test that swaps httpx.Client
+# for a fake gets its fake rather than a client built before the swap.
+_POOL_LIMITS = httpx.Limits(max_connections=100, max_keepalive_connections=50, keepalive_expiry=30)
+_pool_lock = threading.Lock()
+_pool: tuple[Any, httpx.Client] | None = None
+
+
+def _client() -> httpx.Client:
+    global _pool
+    factory = httpx.Client
+    pool = _pool
+    if pool is None or pool[0] is not factory:
+        with _pool_lock:
+            pool = _pool
+            if pool is None or pool[0] is not factory:
+                pool = (factory, factory(timeout=MAX_CALL_SECONDS, limits=_POOL_LIMITS))
+                _pool = pool
+    return pool[1]
 
 
 @dataclass(frozen=True)
@@ -91,8 +116,9 @@ def post_chat(
         # budget that three nodes still have to share.
         timeout = MAX_CALL_SECONDS if left is None else min(MAX_CALL_SECONDS, left)
         try:
-            with httpx.Client(timeout=timeout) as client:
-                resp = client.post(request.url, json=request.body, headers=request.headers)
+            resp = _client().post(
+                request.url, json=request.body, headers=request.headers, timeout=timeout
+            )
         except httpx.HTTPError as exc:  # connection/timeout — transient, retry
             last_exc = exc
             _sleep_or_give_up((2**attempt) + random.uniform(0, 0.5))
