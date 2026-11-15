@@ -1,6 +1,6 @@
-"""sentinel-verify: a deterministic grounding gate for RAG answers.
+"""sentinel-proof: a deterministic grounding gate for RAG answers.
 
-    from sentinel_verify import verify, passages_from_texts
+    from sentinel_proof import verify, passages_from_texts
 
     passages = passages_from_texts(["Customers may request a refund within 30 days."])
     v = verify("Refunds are available for 60 days [1].", passages, citation_style="numeric")

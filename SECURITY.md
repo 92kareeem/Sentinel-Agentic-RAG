@@ -3,10 +3,10 @@
 ## Reporting a vulnerability
 
 Please report security issues privately through
-[GitHub's private vulnerability reporting](https://github.com/92kareeem/Sentinel-Agentic-RAG/security/advisories/new)
+[GitHub's private vulnerability reporting](https://github.com/92kareeem/sentinel-rag/security/advisories/new)
 for this repository. Do not open a public issue.
 
-Include what you can: the component (`sentinel-verify` package, the API, the
+Include what you can: the component (`sentinel-proof` package, the API, the
 UI, the AWS deployment scripts), steps to reproduce, and the impact you
 believe it has. You will get an acknowledgement within 72 hours and a status
 update within 14 days.
@@ -15,7 +15,7 @@ update within 14 days.
 
 | Component | Supported |
 |---|---|
-| `sentinel-verify` | the latest minor release on PyPI |
+| `sentinel-proof` | the latest minor release on PyPI |
 | Sentinel platform | the `main` branch |
 
 ## What counts
@@ -29,5 +29,5 @@ is a report we want.
 
 ## Dependencies
 
-Dependabot alerts on this repository are patched promptly. `sentinel-verify`
+Dependabot alerts on this repository are patched promptly. `sentinel-proof`
 has no runtime dependencies by design, and CI enforces that.

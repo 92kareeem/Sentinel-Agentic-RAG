@@ -23,8 +23,8 @@ Every sentence it ships is cited and checked against the passage it cites. What 
 You need Docker. You do not need Python, Node, an AWS account or, for the demo, an API key.
 
 ```bash
-git clone https://github.com/92kareeem/Sentinel-Agentic-RAG.git
-cd Sentinel-Agentic-RAG
+git clone https://github.com/92kareeem/sentinel-rag.git
+cd Sentinel-RAG
 cp .env.example .env        # optional: add a free Groq key from console.groq.com
 docker compose up --build   # then open http://localhost:5173
 ```
@@ -62,16 +62,16 @@ Most RAG stacks fail in production the same three ways: a fluent answer that the
 ## Use the grounding gate in your own stack
 
 The gate that runs last in Sentinel is also a standalone, dependency-free,
-Apache-2.0 package: [`sentinel-verify`](packages/sentinel-verify). It works
+Apache-2.0 package: [`sentinel-proof`](packages/sentinel-proof). It works
 with any retriever and any model, and most RAG prompts need no change because
 it reads the `[1]`, `[2]` citations they already produce.
 
 ```bash
-pip install sentinel-verify
+pip install sentinel-proof
 ```
 
 ```python
-from sentinel_verify import verify, from_langchain
+from sentinel_proof import verify, from_langchain
 
 passages = from_langchain(retriever.invoke(question))   # or from_llamaindex(...), or plain strings
 v = verify(llm_answer, passages, question, citation_style="numeric")
@@ -82,7 +82,7 @@ v.safe_text()  # the answer, or refusal prose if too much was stripped: never th
 ```
 
 Per-claim detail (`v.claims`), repaired citations, provenance hashes and a CLI
-for CI are in the [package README](packages/sentinel-verify/README.md).
+for CI are in the [package README](packages/sentinel-proof/README.md).
 
 ---
 
@@ -306,7 +306,7 @@ Stated plainly, because a system whose guarantees are precisely scoped is more t
 ## Repository layout
 
 ```
-packages/sentinel-verify/  the grounding gate as a standalone Apache-2.0 package (pip install sentinel-verify)
+packages/sentinel-proof/  the grounding gate as a standalone Apache-2.0 package (pip install sentinel-proof)
 backend/app/agents/        LangGraph nodes and routing (graph.py is the whole state machine)
 backend/app/guardrails/    auth, access, injection, PII, quota, cost governor, grounding (adapter over the package)
 backend/app/llm/           provider adapters over one resilient HTTP core, pricing
@@ -326,8 +326,8 @@ docker/ · infra/           compose images, Lambda image, idempotent AWS deploy
 ## License
 
 Sentinel is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only).
-The [`sentinel-verify`](packages/sentinel-verify) package is licensed separately under
-[Apache-2.0](packages/sentinel-verify/LICENSE), so the grounding gate can be used in any project.
+The [`sentinel-proof`](packages/sentinel-proof) package is licensed separately under
+[Apache-2.0](packages/sentinel-proof/LICENSE), so the grounding gate can be used in any project.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get involved and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 
 You may use, modify and self-host it, including commercially. If you run a

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from sentinel_verify import normalize_citations, passages_from_texts, strip_citations, verify
-from sentinel_verify.citations import numeric_to_tags, tags_to_numeric
+from sentinel_proof import normalize_citations, passages_from_texts, strip_citations, verify
+from sentinel_proof.citations import numeric_to_tags, tags_to_numeric
 
 PASSAGES = passages_from_texts(
     [
