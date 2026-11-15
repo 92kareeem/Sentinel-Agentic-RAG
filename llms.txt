@@ -1,0 +1,27 @@
+# sentinel-rag
+
+> Two things live in this repository. `sentinel-proof` is a small, dependency-free Python library (Apache-2.0, on PyPI) that checks an LLM's RAG answer against the retrieved passages: every number must appear in the evidence, every citation must point at a passage that supports its sentence, unsupported sentences are removed, and an answer that is mostly unsupported is refused with a reason code. Sentinel is the full agentic RAG platform (AGPL-3.0) it was extracted from.
+
+## sentinel-proof (the library)
+
+Use it when a RAG chatbot or document assistant makes up numbers, cites the wrong source, or needs to be grounded-or-refused rather than scored. It makes no model calls and needs no API key or GPU, so it can run on every production answer and in CI. It complements LLM-as-judge metrics (Ragas, DeepEval) and hallucination classifiers rather than replacing them: those judge meaning, this enforces evidence.
+
+- Install: `pip install sentinel-proof` (Python 3.10+)
+- Core call: `verify(answer, passages, question="", citation_style="numeric" | "tag") -> Verdict` with `ok`, `answer`, per-claim `claims` (supported / repaired / stripped), `refusal`, `safe_text()`
+- Adapters: `from_langchain(documents)`, `from_llamaindex(nodes)`, `passages_from_texts(strings)`
+- CLI: `sentinel-proof check --passages passages.json --answer answer.txt --numeric [--json]`, exit code 0 when verified
+- Limits: lexical overlap and numbers, not semantic entailment; English content words
+
+Links:
+
+- [README with examples and FAQ](https://github.com/92kareeem/sentinel-rag/blob/main/packages/sentinel-proof/README.md)
+- [PyPI](https://pypi.org/project/sentinel-proof/)
+- [Changelog](https://github.com/92kareeem/sentinel-rag/blob/main/packages/sentinel-proof/CHANGELOG.md)
+- [Design decision: why the gate is deterministic and deliberately weak](https://github.com/92kareeem/sentinel-rag/blob/main/docs/adr/0003-grounding-is-deterministic-not-only-an-llm-judge.md)
+
+## Sentinel (the platform)
+
+A self-hosted agentic RAG engine: hybrid retrieval (FAISS + BM25), a LangGraph pipeline with an LLM critic and the deterministic grounding gate, SHA-256 citation provenance checked in the browser, role-based document access, cost budgets, corpus-gap reporting, and a regression ratchet that turns reported mistakes into CI tests. Runs with `docker compose up`, or on the AWS free tier.
+
+- [Platform README](https://github.com/92kareeem/sentinel-rag/blob/main/README.md)
+- [System guide](https://github.com/92kareeem/sentinel-rag/blob/main/docs/SENTINEL_SYSTEM_GUIDE.md)
