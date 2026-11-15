@@ -1,7 +1,7 @@
 name: Grounding gate gave the wrong verdict
 description: A correct answer was stripped or refused, or an unsupported claim got through
 title: "[gate] "
-labels: ["sentinel-verify", "bug"]
+labels: ["sentinel-proof", "bug"]
 body:
   - type: markdown
     attributes:
@@ -43,14 +43,14 @@ body:
     id: verdict
     attributes:
       label: What the gate returned, and what you expected
-      description: "`sentinel-verify check ... --json` output is ideal."
+      description: "`sentinel-proof check ... --json` output is ideal."
       render: text
     validations:
       required: true
   - type: input
     id: version
     attributes:
-      label: sentinel-verify version and citation_style
+      label: sentinel-proof version and citation_style
       placeholder: "0.1.0, numeric"
     validations:
       required: true

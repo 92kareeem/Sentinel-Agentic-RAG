@@ -1,7 +1,7 @@
 """Deterministic grounding verifier — the last gate before the user.
 
-The engine lives in the standalone ``sentinel-verify`` package
-(``packages/sentinel-verify``), which anyone can use with any RAG stack. This
+The engine lives in the standalone ``sentinel-proof`` package
+(``packages/sentinel-proof``), which anyone can use with any RAG stack. This
 module is the platform's adapter: it maps our ``Chunk`` records onto the
 package's ``Passage`` and the package's ``Verdict`` onto the ``GroundingResult``
 the graph, the demo and the tests already consume.
@@ -17,8 +17,8 @@ package for the full method and its tests.
 
 from dataclasses import dataclass
 
-from sentinel_verify import MAX_STRIPPED_RATIO, MIN_LEXICAL_OVERLAP, Passage, normalize_citations
-from sentinel_verify import verify as _verify
+from sentinel_proof import MAX_STRIPPED_RATIO, MIN_LEXICAL_OVERLAP, Passage, normalize_citations
+from sentinel_proof import verify as _verify
 
 from app.models.schemas import Chunk
 

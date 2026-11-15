@@ -4,7 +4,7 @@ Thanks for looking. This repository holds two things with two licenses:
 
 | Part | Where | License | What it is |
 |---|---|---|---|
-| `sentinel-verify` | [`packages/sentinel-verify/`](packages/sentinel-verify) | Apache-2.0 | The deterministic grounding gate as a dependency-free Python package |
+| `sentinel-proof` | [`packages/sentinel-proof/`](packages/sentinel-proof) | Apache-2.0 | The deterministic grounding gate as a dependency-free Python package |
 | Sentinel | everything else | AGPL-3.0 | The full platform: API, agent graph, control plane UI, AWS deployment |
 
 Most first contributions land in the package: it is small, pure Python, fully
@@ -14,14 +14,14 @@ has a test.
 ## Set up
 
 ```bash
-git clone https://github.com/92kareeem/Sentinel-Agentic-RAG.git
-cd Sentinel-Agentic-RAG
+git clone https://github.com/92kareeem/sentinel-rag.git
+cd Sentinel-RAG
 ```
 
 **Package only** (seconds, no Docker, no keys):
 
 ```bash
-cd packages/sentinel-verify
+cd packages/sentinel-proof
 python -m venv .venv && . .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 pytest -q && ruff check . && mypy src
@@ -44,7 +44,7 @@ docker compose up --build   # the full stack on http://localhost:5173
 - **Tests.** A behaviour change comes with a test that fails without it. For
   the grounding gate, write the test the way the existing ones are written:
   a short docstring saying what real answer went wrong and why.
-- **Keep the package dependency-free.** CI fails if `sentinel-verify` grows a
+- **Keep the package dependency-free.** CI fails if `sentinel-proof` grows a
   runtime dependency. Adapters for other libraries are duck-typed on purpose.
 - **Public Python ≥ 3.10** in the package; the platform targets 3.12.
 - `ruff check`, `ruff format --check` (package) and `mypy` must pass.
@@ -70,6 +70,6 @@ This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
 
 ## License of contributions
 
-By contributing you agree that your contributions to `packages/sentinel-verify`
+By contributing you agree that your contributions to `packages/sentinel-proof`
 are licensed under Apache-2.0 and contributions elsewhere under AGPL-3.0, the
 same terms as the code they modify.

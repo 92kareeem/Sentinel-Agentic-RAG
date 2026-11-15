@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `sentinel-verify`. The format follows
+All notable changes to `sentinel-proof`. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
@@ -9,7 +9,7 @@ All notable changes to `sentinel-verify`. The format follows
 ## [0.1.0] - 2026-11-15
 
 First release, extracted from the grounding gate that runs in production
-inside [Sentinel](https://github.com/92kareeem/Sentinel-Agentic-RAG).
+inside [Sentinel](https://github.com/92kareeem/sentinel-rag).
 
 ### Added
 
@@ -23,4 +23,4 @@ inside [Sentinel](https://github.com/92kareeem/Sentinel-Agentic-RAG).
 - `Passage` with duck-typed adapters `from_langchain` and `from_llamaindex`.
 - Provenance hashing (`provenance_hash`, `check_provenance`, `HASH_RECIPE`).
 - Refusal reason codes and safe refusal prose that never carries the draft.
-- `sentinel-verify check` CLI with human and JSON output.
+- `sentinel-proof check` CLI with human and JSON output.

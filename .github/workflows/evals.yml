@@ -64,7 +64,7 @@ jobs:
       - name: Install full stack (evals embed the corpus locally)
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -e ./packages/sentinel-verify -e .
+          pip install -e ./packages/sentinel-proof -e .
       # ./corpus, NOT ./docs. The ingester takes every .md under the folder it
       # is given, so pointing it at ./docs indexed this repository's own
       # engineering documentation alongside the demo business documents — and

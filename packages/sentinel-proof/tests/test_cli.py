@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from sentinel_verify.cli import main
+from sentinel_proof.cli import main
 
 PASSAGES = [
     "Customers may request a refund within 30 days of purchase.",

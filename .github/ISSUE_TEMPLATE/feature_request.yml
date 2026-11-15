@@ -26,5 +26,5 @@ body:
     attributes:
       label: Where it belongs
       options:
-        - label: "`sentinel-verify` package (must stay dependency-free and deterministic)"
+        - label: "`sentinel-proof` package (must stay dependency-free and deterministic)"
         - label: Sentinel platform

@@ -1,4 +1,4 @@
-# sentinel-verify
+# sentinel-proof
 
 **A deterministic grounding gate for RAG answers.** Every number in a claim
 must appear in the passage it cites. Every citation must point at a passage
@@ -9,11 +9,11 @@ of shipped.
 Pure Python. No dependencies. No model calls. Works with any retrieval stack.
 
 ```bash
-pip install sentinel-verify
+pip install sentinel-proof
 ```
 
 ```python
-from sentinel_verify import verify, passages_from_texts
+from sentinel_proof import verify, passages_from_texts
 
 passages = passages_from_texts([
     "Customers may request a refund within 30 days of purchase.",
@@ -59,9 +59,9 @@ refusals on good answers. Use it *under* your judge, not instead of it. The two
 catch different things.
 
 The design and its measured trade-offs come from running it in production inside
-[Sentinel](https://github.com/92kareeem/Sentinel-Agentic-RAG), where it is the
+[Sentinel](https://github.com/92kareeem/sentinel-rag), where it is the
 last node before the user. The relevant decision record is
-[ADR 0003: grounding is deterministic, and deliberately weak](https://github.com/92kareeem/Sentinel-Agentic-RAG/blob/main/docs/adr/0003-grounding-is-deterministic-not-only-an-llm-judge.md).
+[ADR 0003: grounding is deterministic, and deliberately weak](https://github.com/92kareeem/sentinel-rag/blob/main/docs/adr/0003-grounding-is-deterministic-not-only-an-llm-judge.md).
 
 ## What it checks, per sentence
 
@@ -103,7 +103,7 @@ prompt changes. The verified answer is written back in the same style.
 ## Bring your own retriever
 
 ```python
-from sentinel_verify import from_langchain, from_llamaindex, Passage
+from sentinel_proof import from_langchain, from_llamaindex, Passage
 
 passages = from_langchain(retriever.invoke(question))        # LangChain Documents
 passages = from_llamaindex(retriever.retrieve(question))     # LlamaIndex nodes / NodeWithScore
@@ -131,8 +131,8 @@ Sentinel's web UI does this in the browser with WebCrypto on every citation.
 ## CLI
 
 ```bash
-sentinel-verify check --answer answer.txt --passages passages.json --numeric
-echo "Refunds take 30 days [1]." | sentinel-verify check --passages passages.json --numeric --json
+sentinel-proof check --answer answer.txt --passages passages.json --numeric
+echo "Refunds take 30 days [1]." | sentinel-proof check --passages passages.json --numeric --json
 ```
 
 Exit code 0 when verified, 1 when not. `--json` gives the full verdict, claims

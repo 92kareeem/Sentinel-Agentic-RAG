@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from sentinel_verify import (
+from sentinel_proof import (
     HASH_RECIPE,
     Passage,
     check_provenance,
