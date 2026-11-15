@@ -14,12 +14,14 @@ dependencies = [
     "boto3~=1.35",
     # >=1.0.10: unsafe msgpack deserialization when loading checkpoints
     # (GHSA via Dependabot #14). ~=0.2 capped us below every fixed release.
-    "langgraph>=1.0.10,<2",
+    # >=1.2.14: unencoded identifiers in SDK streaming (Dependabot #38).
+    "langgraph>=1.2.14,<2",
     # Security floors for langgraph's own dependencies, which a langgraph
     # upgrade alone does not guarantee: unsafe JSON/BaseCache
-    # deserialization (#13, #17) and unsafe URL path construction (#18).
+    # deserialization (#13, #17), unsafe URL path construction (#18) and
+    # unencoded identifiers redirecting authenticated GETs (#39).
     "langgraph-checkpoint>=4.1.1",
-    "langgraph-sdk>=0.3.15",
+    "langgraph-sdk>=0.4.6",
     # Pulls torch (CPU wheels forced in Dockerfile.lambda). 3.x pinned
     # transformers <5, and transformers <5.10 has four advisories including
     # remote code execution at model load and a save_pretrained path
