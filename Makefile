@@ -46,7 +46,7 @@ venv:
 
 install: venv
 	$(PY) -m pip install --upgrade pip
-	$(PY) -m pip install -e ".[dev]"
+	$(PY) -m pip install -e ./packages/sentinel-verify -e ".[dev]"
 	cd frontend && npm ci
 
 # Build FAISS + BM25 + chunks.jsonl from ./corpus into ./index.

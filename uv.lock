@@ -6,6 +6,12 @@ resolution-markers = [
     "python_full_version < '3.15'",
 ]
 
+[manifest]
+members = [
+    "sentinel",
+    "sentinel-verify",
+]
+
 [[package]]
 name = "annotated-doc"
 version = "0.0.4"
@@ -1909,6 +1915,7 @@ dependencies = [
     { name = "python-multipart" },
     { name = "rank-bm25" },
     { name = "sentence-transformers" },
+    { name = "sentinel-verify" },
     { name = "transformers" },
 ]
 
@@ -1944,8 +1951,29 @@ requires-dist = [
     { name = "rank-bm25", specifier = "~=0.2.2" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "~=0.8" },
     { name = "sentence-transformers", specifier = ">=6.1,<7" },
+    { name = "sentinel-verify", editable = "packages/sentinel-verify" },
     { name = "transformers", specifier = ">=5.10.0" },
     { name = "uvicorn", marker = "extra == 'dev'", specifier = "~=0.32" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "sentinel-verify"
+version = "0.1.0"
+source = { editable = "packages/sentinel-verify" }
+
+[package.optional-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
 ]
 provides-extras = ["dev"]
 

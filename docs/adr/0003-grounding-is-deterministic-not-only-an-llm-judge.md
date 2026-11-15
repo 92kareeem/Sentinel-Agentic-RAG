@@ -2,6 +2,11 @@
 
 **Status:** Accepted · **Date:** 2026-09-05 (documents pre-existing design)
 
+> **2026-11-15:** the gate now lives in the standalone, dependency-free
+> `sentinel-verify` package (`packages/sentinel-verify`, Apache-2.0).
+> `guardrails/grounding.py` is the platform's adapter over it. Every rule and
+> test described below moved with it; the decision is unchanged.
+
 ## Context
 
 Sentinel's product claim is that answers are grounded in the user's documents.

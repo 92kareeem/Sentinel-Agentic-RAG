@@ -39,7 +39,7 @@ asked.
 
 ## 3. A deterministic gate behind an LLM judge
 
-**Read:** `guardrails/grounding.py`, `agents/critic.py`, ADR 0003
+**Read:** `packages/sentinel-verify/src/sentinel_verify/grounding.py` (the gate, a standalone package), `guardrails/grounding.py` (the platform's adapter), `agents/critic.py`, ADR 0003
 
 The critic is a model and can be fooled in the same direction as the model
 it grades. The grounding gate contains no model: every number in a claim must

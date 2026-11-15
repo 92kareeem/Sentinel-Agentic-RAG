@@ -15,7 +15,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY docker/requirements-lambda.txt /tmp/requirements.txt
-RUN pip install -r /tmp/requirements.txt "uvicorn[standard]~=0.32"
+# The grounding gate is the in-repo sentinel-verify package, installed from
+# source so the image always runs the gate the commit ships, not a PyPI release.
+COPY packages/sentinel-verify /tmp/sentinel-verify
+RUN pip install -r /tmp/requirements.txt "uvicorn[standard]~=0.32" /tmp/sentinel-verify \
+ && rm -rf /tmp/sentinel-verify
 
 # Pinned to a commit, not a branch: a moved model would silently produce
 # embeddings that no longer match an index built with the old one.

@@ -1,0 +1,101 @@
+name: sentinel-verify
+
+# The standalone package has no dependencies and must stay that way, so it is
+# tested on its own, on every Python it claims to support, with nothing else
+# installed. Publishing is by tag: `sentinel-verify-v0.1.0` builds the sdist
+# and wheel, uploads them to PyPI with trusted publishing (no API token in the
+# repository), and attaches them to a GitHub release.
+
+on:
+  push:
+    branches: [main]
+    paths: ["packages/sentinel-verify/**", ".github/workflows/verify-package.yml"]
+    tags: ["sentinel-verify-v*"]
+  pull_request:
+    paths: ["packages/sentinel-verify/**", ".github/workflows/verify-package.yml"]
+
+defaults:
+  run:
+    working-directory: packages/sentinel-verify
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[dev]"
+      - run: ruff check . && ruff format --check .
+      - run: mypy src
+      - run: pytest -q
+      - name: The package really has no dependencies
+        run: |
+          pip install pipdeptree
+          python - <<'PY'
+          import json, subprocess
+          tree = json.loads(subprocess.check_output(["pipdeptree", "--json", "-p", "sentinel-verify"]))
+          deps = [d for p in tree if p["package"]["key"] == "sentinel-verify" for d in p["dependencies"]]
+          assert not deps, f"sentinel-verify grew dependencies: {deps}"
+          print("no runtime dependencies")
+          PY
+
+  build:
+    name: Build distributions
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - name: The wheel installs and the CLI runs from a clean interpreter
+        run: |
+          python -m venv /tmp/clean && /tmp/clean/bin/pip install dist/*.whl
+          echo '["Customers may request a refund within 30 days."]' > /tmp/p.json
+          echo "Refunds are available within 30 days [1]." | /tmp/clean/bin/sentinel-verify check --passages /tmp/p.json --numeric
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: packages/sentinel-verify/dist/
+
+  publish:
+    name: Publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/sentinel-verify-v')
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # trusted publishing
+      contents: write # the GitHub release
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: The tag matches the package version
+        working-directory: .
+        run: |
+          tag="${GITHUB_REF_NAME#sentinel-verify-v}"
+          ls dist/ | grep -q "sentinel_verify-${tag}-" || { echo "tag $tag does not match dist/"; ls dist; exit 1; }
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+      - name: GitHub release
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "sentinel-verify ${GITHUB_REF_NAME#sentinel-verify-v}" \
+            --notes "See packages/sentinel-verify/CHANGELOG.md."

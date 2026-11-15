@@ -47,10 +47,10 @@ risk onto whoever acted on it.
 
 | Failure mode of naive RAG | Sentinel's mechanism | Where |
 |---|---|---|
-| Fluent hallucination | LLM critic + deterministic grounding gate | `agents/critic.py`, `guardrails/grounding.py` |
-| Invented citations | Every cited chunk id must exist in what was actually retrieved | `grounding.py` |
-| Invented numbers | Numeric claims must appear literally in retrieved text | `grounding.py` |
-| Citations pointing at unrelated text | Lexical overlap between claim and cited chunk | `grounding.py` |
+| Fluent hallucination | LLM critic + deterministic grounding gate | `agents/critic.py`, `packages/sentinel-verify` (adapter: `guardrails/grounding.py`) |
+| Invented citations | Every cited chunk id must exist in what was actually retrieved | `sentinel_verify/grounding.py` |
+| Invented numbers | Numeric claims must appear literally in retrieved text | `sentinel_verify/grounding.py` |
+| Citations pointing at unrelated text | Lexical overlap between claim and cited chunk | `sentinel_verify/grounding.py` |
 | Answering when it shouldn't | `INSUFFICIENT_CONTEXT` sentinel → structured refusal | `synthesizer.py`, `graph.py` |
 | Malicious instructions inside a document | Evidence fenced and declared untrusted | `synthesizer.py` |
 | One tenant reading another's documents | Owner filter at retrieval + authorization at the API | `retriever.py`, `routes_query.py` |
