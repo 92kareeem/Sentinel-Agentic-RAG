@@ -12,6 +12,8 @@ Every sentence it ships is cited and checked against the passage it cites. What 
 
 `FastAPI` · `LangGraph` · `FAISS + BM25` · `Groq / OpenAI / Azure / Anthropic / Ollama` · `React + TypeScript` · `AWS free tier`
 
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+
 </div>
 
 ---
@@ -264,6 +266,17 @@ corpus/                    the sample business documents that get indexed
 docs/                      system guide, ADRs, learning path (never indexed)
 docker/ · infra/           compose images, Lambda image, idempotent AWS deploy
 ```
+
+---
+
+## License
+
+Sentinel is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only).
+
+You may use, modify and self-host it, including commercially. If you run a
+modified version as a network service, you must offer its users the source of
+your modifications under the same license. The PDF parser, PyMuPDF, is itself
+AGPL-3.0, which is why the project uses the same license.
 
 ---
 

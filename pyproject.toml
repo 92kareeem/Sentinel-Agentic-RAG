@@ -3,6 +3,8 @@ name = "sentinel"
 version = "1.0.0"
 description = "Self-healing, zero-trust, cost-bounded agentic RAG with deterministic grounding and a regression ratchet"
 requires-python = ">=3.12"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
 dependencies = [
     "fastapi~=0.115",
     "mangum~=0.19",
@@ -45,7 +47,8 @@ dev = [
 ]
 
 [build-system]
-requires = ["setuptools>=75"]
+# >=77: SPDX `license` strings and `license-files` (PEP 639).
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
