@@ -285,6 +285,16 @@ def test_legacy_local_mode_flag_still_sets_the_backend(monkeypatch) -> None:
     assert config.get_settings().storage_backend == "local"
 
 
+def test_legacy_local_mode_false_does_not_demand_a_bucket(monkeypatch) -> None:
+    # DynamoDB-only tooling and tests run with LOCAL_MODE=false and no bucket;
+    # only the explicit STORAGE_BACKEND=aws switch validates the bucket up front.
+    monkeypatch.delenv("STORAGE_BACKEND", raising=False)
+    monkeypatch.setenv("LOCAL_MODE", "false")
+    monkeypatch.setenv("S3_BUCKET_DOCS", "")
+    config.get_settings.cache_clear()
+    assert config.get_settings().storage_backend == "aws"
+
+
 def test_demo_mode_is_refused_outside_local_storage(monkeypatch) -> None:
     monkeypatch.setenv("STORAGE_BACKEND", "aws")
     monkeypatch.setenv("S3_BUCKET_DOCS", "b")

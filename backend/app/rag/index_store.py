@@ -105,7 +105,9 @@ def search(
         if not allowed_rows:
             return []
         ids = np.fromiter(sorted(allowed_rows), dtype=np.int64)
-        params = faiss.SearchParameters(sel=faiss.IDSelectorBatch(ids))  # type: ignore[call-arg]
+        selector = faiss.IDSelectorBatch(ids)
+        # Some faiss builds type SearchParameters() as taking no kwargs.
+        params = faiss.SearchParameters(sel=selector)  # type: ignore[call-arg, unused-ignore]
         scores, rows = index.search(query_vec.reshape(1, -1), min(k, len(ids)), params=params)
     else:
         scores, rows = index.search(query_vec.reshape(1, -1), min(k, index.ntotal))

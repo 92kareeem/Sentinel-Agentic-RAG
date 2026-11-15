@@ -187,8 +187,14 @@ class Settings(BaseSettings):
         STORAGE_BACKEND wins when set. When it is not, the older LOCAL_MODE /
         USE_S3_INDEX pair is honoured and STORAGE_BACKEND is derived from it,
         so every existing environment file and the Lambda image keep working.
+
+        The S3 bucket is required up front only when STORAGE_BACKEND=aws is
+        chosen explicitly. The legacy LOCAL_MODE=false shape keeps its old
+        contract (the bucket is checked where S3 is first used), because
+        DynamoDB-only tooling and tests rely on it.
         """
-        if self.storage_backend:
+        explicit = bool(self.storage_backend)
+        if explicit:
             if self.storage_backend not in ("local", "aws"):
                 raise ValueError(
                     f"STORAGE_BACKEND must be 'local' or 'aws', got {self.storage_backend!r}"
@@ -197,7 +203,7 @@ class Settings(BaseSettings):
             self.use_s3_index = self.storage_backend == "aws"
         else:
             self.storage_backend = "local" if self.local_mode else "aws"
-        if self.storage_backend == "aws" and not self.s3_bucket_docs:
+        if explicit and self.storage_backend == "aws" and not self.s3_bucket_docs:
             raise ValueError("STORAGE_BACKEND=aws requires S3_BUCKET_DOCS")
         if self.demo_mode and self.storage_backend != "local":
             raise ValueError("DEMO_MODE is only permitted with STORAGE_BACKEND=local")
