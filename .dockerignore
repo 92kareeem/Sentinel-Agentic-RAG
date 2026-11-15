@@ -16,3 +16,7 @@ models
 notes
 *.pdf
 infra/API_KEYS.txt
+packages/*/.venv
+packages/*/dist
+packages/*/build
+**/*.egg-info

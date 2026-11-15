@@ -1,0 +1,56 @@
+name: Grounding gate gave the wrong verdict
+description: A correct answer was stripped or refused, or an unsupported claim got through
+title: "[gate] "
+labels: ["sentinel-verify", "bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The most useful report is one we can turn straight into a failing test. Paste the
+        exact strings; trimming them often removes the thing that triggered the behaviour.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What went wrong
+      options:
+        - A correct, supported claim was stripped (false strip)
+        - A correct answer was refused (ok=False)
+        - An unsupported or fabricated claim was kept (miss)
+        - A citation was repaired to the wrong passage
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: answer
+    attributes:
+      label: The answer, exactly as the model wrote it
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: passages
+    attributes:
+      label: The passages, in the order they were given to verify()
+      description: One per line, or the JSON you passed to the CLI.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: question
+    attributes:
+      label: The user's question, if you passed one
+  - type: textarea
+    id: verdict
+    attributes:
+      label: What the gate returned, and what you expected
+      description: "`sentinel-verify check ... --json` output is ideal."
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: sentinel-verify version and citation_style
+      placeholder: "0.1.0, numeric"
+    validations:
+      required: true

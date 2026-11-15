@@ -1,0 +1,30 @@
+name: Feature request
+description: Propose a change to the gate or the platform
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What goes wrong today, for whom, and how often. A real example beats a general description.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would change
+      description: The behaviour you want. If it affects the grounding gate, say what a false refusal and a miss would look like under the new rule.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Where it belongs
+      options:
+        - label: "`sentinel-verify` package (must stay dependency-free and deterministic)"
+        - label: Sentinel platform

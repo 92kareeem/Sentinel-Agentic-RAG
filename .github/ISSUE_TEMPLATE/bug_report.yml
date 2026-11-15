@@ -1,0 +1,54 @@
+name: Bug report
+description: Something in the Sentinel platform (API, UI, deploy) does not work as documented
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - API / agent graph
+        - Web UI / control plane
+        - Ingestion / indexing
+        - Access control
+        - docker compose
+        - AWS deployment
+        - Evals / regression ratchet
+        - Benchmarks
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you saw, what you expected. Paste error output as text.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. docker compose up --build
+        2. Ask "..."
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: trace
+    attributes:
+      label: Trace id, if the request returned one
+      description: Shown in the response and in Control plane → Traces. PII is scrubbed before it is stored.
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      placeholder: |
+        OS: Windows 11 / macOS 15 / Ubuntu 24.04
+        Docker: 28.x  (or Python 3.12, Node 20 if running without Docker)
+        LLM_PROVIDER: groq
+        Commit: git rev-parse --short HEAD
+    validations:
+      required: true

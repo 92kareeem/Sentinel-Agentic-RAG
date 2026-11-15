@@ -5,7 +5,11 @@
 FROM public.ecr.aws/lambda/python:3.12
 
 COPY docker/requirements-lambda.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+# The grounding gate is the in-repo sentinel-verify package, installed from
+# source so the image always runs the gate the commit ships, not a PyPI release.
+COPY packages/sentinel-verify /tmp/sentinel-verify
+RUN pip install --no-cache-dir -r /tmp/requirements.txt /tmp/sentinel-verify \
+ && rm -rf /tmp/sentinel-verify
 
 # Fetch the quantized MiniLM at build time rather than COPYing models/onnx/,
 # which is gitignored (23 MB binary) and therefore absent from a fresh clone —

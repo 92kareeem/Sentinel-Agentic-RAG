@@ -1,0 +1,61 @@
+[project]
+name = "sentinel-verify"
+version = "0.1.0"
+description = "Deterministic grounding gate for RAG: every number must be in the evidence, every citation must point where it says, and what cannot be verified is refused with a reason."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["rag", "hallucination", "grounding", "citations", "llm", "guardrails", "verification"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Quality Assurance",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/92kareeem/Sentinel-Agentic-RAG"
+Documentation = "https://github.com/92kareeem/Sentinel-Agentic-RAG/tree/main/packages/sentinel-verify"
+Changelog = "https://github.com/92kareeem/Sentinel-Agentic-RAG/blob/main/packages/sentinel-verify/CHANGELOG.md"
+Issues = "https://github.com/92kareeem/Sentinel-Agentic-RAG/issues"
+
+[project.scripts]
+sentinel-verify = "sentinel_verify.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.8", "mypy>=1.13"]
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+sentinel_verify = ["py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+# Newer ruff also formats the Python blocks inside Markdown. The README's
+# examples align their comments deliberately, so they are left alone.
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+strict = true
+python_version = "3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

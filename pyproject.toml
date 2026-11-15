@@ -34,6 +34,10 @@ dependencies = [
     "pymupdf~=1.24",
     "numpy~=2.1",
     "python-multipart~=0.0.12",
+    # The grounding gate, as the standalone Apache-2.0 package in
+    # packages/sentinel-verify. Resolved from the workspace here; pip-based
+    # installs (CI, Docker, `make install`) install that directory explicitly.
+    "sentinel-verify>=0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -77,3 +81,9 @@ python_version = "3.12"
 strict = true
 ignore_missing_imports = true      # faiss/rank_bm25/fitz ship no type stubs
 mypy_path = "backend"
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+sentinel-verify = { workspace = true }

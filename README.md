@@ -59,6 +59,33 @@ Most RAG stacks fail in production the same three ways: a fluent answer that the
 
 ---
 
+## Use the grounding gate in your own stack
+
+The gate that runs last in Sentinel is also a standalone, dependency-free,
+Apache-2.0 package: [`sentinel-verify`](packages/sentinel-verify). It works
+with any retriever and any model, and most RAG prompts need no change because
+it reads the `[1]`, `[2]` citations they already produce.
+
+```bash
+pip install sentinel-verify
+```
+
+```python
+from sentinel_verify import verify, from_langchain
+
+passages = from_langchain(retriever.invoke(question))   # or from_llamaindex(...), or plain strings
+v = verify(llm_answer, passages, question, citation_style="numeric")
+
+v.ok           # every number is in the evidence and every citation points where it says
+v.answer       # the supported sentences, re-cited; fabricated claims stripped
+v.safe_text()  # the answer, or refusal prose if too much was stripped: never the rejected draft
+```
+
+Per-claim detail (`v.claims`), repaired citations, provenance hashes and a CLI
+for CI are in the [package README](packages/sentinel-verify/README.md).
+
+---
+
 ## Architecture
 
 ```mermaid
@@ -279,8 +306,9 @@ Stated plainly, because a system whose guarantees are precisely scoped is more t
 ## Repository layout
 
 ```
+packages/sentinel-verify/  the grounding gate as a standalone Apache-2.0 package (pip install sentinel-verify)
 backend/app/agents/        LangGraph nodes and routing (graph.py is the whole state machine)
-backend/app/guardrails/    auth, access, injection, PII, quota, cost governor, grounding
+backend/app/guardrails/    auth, access, injection, PII, quota, cost governor, grounding (adapter over the package)
 backend/app/llm/           provider adapters over one resilient HTTP core, pricing
 backend/app/rag/           chunking, PDF, embeddings, FAISS/BM25, snapshots, cache, publication
 backend/app/learning/      casebook (failures → work list) and ratchet (fixes → tests)
@@ -298,6 +326,9 @@ docker/ · infra/           compose images, Lambda image, idempotent AWS deploy
 ## License
 
 Sentinel is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only).
+The [`sentinel-verify`](packages/sentinel-verify) package is licensed separately under
+[Apache-2.0](packages/sentinel-verify/LICENSE), so the grounding gate can be used in any project.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get involved and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 
 You may use, modify and self-host it, including commercially. If you run a
 modified version as a network service, you must offer its users the source of
