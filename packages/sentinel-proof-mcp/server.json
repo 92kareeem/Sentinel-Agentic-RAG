@@ -1,0 +1,25 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.92kareeem/sentinel-proof",
+  "title": "sentinel-proof",
+  "description": "Checks an answer against its sources: numbers and citations verified, wrong ones fixed. No model.",
+  "repository": {
+    "url": "https://github.com/92kareeem/sentinel-rag",
+    "source": "github",
+    "subfolder": "packages/sentinel-proof-mcp"
+  },
+  "websiteUrl": "https://92kareeem.github.io/sentinel-rag/",
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "sentinel-proof-mcp",
+      "version": "0.1.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
