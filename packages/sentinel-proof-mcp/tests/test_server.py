@@ -243,3 +243,25 @@ def test_stdio_subprocess_end_to_end() -> None:
     assert name == SERVER_NAME
     assert not r.is_error
     assert r.structured_content is not None and r.structured_content["repaired_citations"] == 1
+
+
+def test_readme_json_example_is_the_tools_real_output() -> None:
+    """The example verdict in README.md must be what verify_answer actually returns."""
+    import pathlib
+    import re
+
+    readme = pathlib.Path(__file__).resolve().parents[1] / "README.md"
+    block = re.search(r"```json\n(\{\n  \"ok\": true.*?)```", readme.read_text(), re.S)
+    assert block, "README example block not found"
+    expected = json.loads(block.group(1))
+
+    async def go(c: Client) -> CallToolResult:
+        return await call(
+            c, answer=ANSWER, passages=PASSAGES, question="What is the refund policy?"
+        )
+
+    out = run(go).structured_content
+    assert out is not None
+    actual = {k: out[k] for k in expected}
+    actual["stripped_ratio"] = round(actual["stripped_ratio"], 3)
+    assert actual == expected
