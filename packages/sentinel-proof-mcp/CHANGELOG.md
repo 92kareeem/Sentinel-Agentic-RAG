@@ -6,6 +6,26 @@ All notable changes to `sentinel-proof-mcp`. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-16
+
+Documentation and CI only; the server is unchanged.
+
+### Added
+
+- `compat/`: one script per agent framework (OpenAI Agents SDK, Pydantic AI,
+  LangChain/LangGraph) that launches the installed server through that
+  framework's MCP client and verifies an answer. A nightly workflow runs them
+  against the latest release of each framework and of this package, plus the
+  official MCP Inspector as a reference client.
+
+### Changed
+
+- README install section covers every client: one-click links for Cursor and
+  VS Code, `claude`/`codex`/`gemini` CLI commands, the standard `mcpServers`
+  block with a table of where it goes per client, HTTP for remote clients,
+  and the framework snippets above. (Written for 0.1.1 but merged after its
+  tag, so it ships here.)
+
 ## [0.1.1] - 2026-11-16
 
 Documentation and metadata only; the server is unchanged.
@@ -14,11 +34,6 @@ Documentation and metadata only; the server is unchanged.
 
 - README leads with the problem, adds "use it when", a comparison with other
   ways to check an answer from an MCP agent, and a FAQ.
-- Install section covers every client: one-click links for Cursor and VS
-  Code, `claude`/`codex`/`gemini` CLI commands, the standard `mcpServers`
-  block with a table of where it goes per client, HTTP for remote clients,
-  and framework snippets for the OpenAI Agents SDK, LangChain/LangGraph and
-  Pydantic AI, each run against this server before being written down.
 - PyPI description and keywords name the clients and the problem.
 - The README's JSON example is pinned by a test to the tool's real output.
 

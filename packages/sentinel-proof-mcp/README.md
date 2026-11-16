@@ -3,6 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/sentinel-proof-mcp.svg)](https://pypi.org/project/sentinel-proof-mcp/)
 [![Python](https://img.shields.io/pypi/pyversions/sentinel-proof-mcp.svg)](https://pypi.org/project/sentinel-proof-mcp/)
 [![MCP registry](https://img.shields.io/badge/MCP%20registry-io.github.92kareeem%2Fsentinel--proof-6f42c1.svg)](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.92kareeem/sentinel-proof)
+[![Framework compatibility](https://github.com/92kareeem/sentinel-rag/actions/workflows/mcp-compat.yml/badge.svg)](https://github.com/92kareeem/sentinel-rag/actions/workflows/mcp-compat.yml)
 [![No API key](https://img.shields.io/badge/API%20key-none-brightgreen.svg)](#faq)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/92kareeem/sentinel-rag/blob/main/packages/sentinel-proof-mcp/LICENSE)
 
@@ -106,7 +107,7 @@ for GUI apps.
 ### From an agent framework
 
 The server works with any LLM provider, because the framework, not the
-server, talks to the model. These were run against this release:
+server, talks to the model. These are run nightly in CI against the latest release of each framework:
 
 **OpenAI Agents SDK**
 
@@ -283,7 +284,13 @@ the design decision are in the
 pip install -e ../sentinel-proof -e ".[dev]"
 pytest -q            # in-process through the MCP client, plus one real stdio subprocess
 ruff check . && mypy src
+python compat/check_openai_agents.py   # launch the installed server from a framework's MCP client
 ```
+
+`compat/` holds one check per agent framework. A
+[nightly workflow](https://github.com/92kareeem/sentinel-rag/actions/workflows/mcp-compat.yml)
+runs them against the latest release of each framework and of this package,
+plus the official MCP Inspector, so the client list above stays true.
 
 ## License
 
