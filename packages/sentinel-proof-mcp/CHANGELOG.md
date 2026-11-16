@@ -6,6 +6,18 @@ All notable changes to `sentinel-proof-mcp`. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-16
+
+Documentation and metadata only; the server is unchanged.
+
+### Changed
+
+- README leads with the problem, adds "use it when", install blocks for VS
+  Code and Windsurf, a comparison with other ways to check an answer from an
+  MCP agent, and a FAQ.
+- PyPI description and keywords name the clients and the problem.
+- The README's JSON example is pinned by a test to the tool's real output.
+
 ## [0.1.0] - 2026-11-16
 
 First release.

@@ -9,13 +9,13 @@
     "subfolder": "packages/sentinel-proof-mcp"
   },
   "websiteUrl": "https://92kareeem.github.io/sentinel-rag/",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "sentinel-proof-mcp",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

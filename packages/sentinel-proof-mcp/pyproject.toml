@@ -1,7 +1,7 @@
 [project]
 name = "sentinel-proof-mcp"
-version = "0.1.0"
-description = "MCP server that checks an LLM answer against its sources: every number and citation verified, wrong citations fixed, unsupported claims removed. Local, no API key, no model."
+version = "0.1.1"
+description = "MCP server that fact-checks an LLM answer against its source passages before the user sees it: every number and citation verified, wrong citations fixed, unsupported sentences removed. Local, deterministic, no API key, no model. For Claude Desktop, Claude Code, Cursor, VS Code and any MCP client."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -18,8 +18,20 @@ keywords = [
     "citations",
     "fact-checking",
     "claude",
+    "claude-desktop",
+    "claude-code",
     "cursor",
+    "vscode",
+    "windsurf",
     "agents",
+    "ai-agents",
+    "agentic-rag",
+    "retrieval-augmented-generation",
+    "llm-guardrails",
+    "answer-verification",
+    "citation-checker",
+    "faithfulness",
+    "trustworthy-ai",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
