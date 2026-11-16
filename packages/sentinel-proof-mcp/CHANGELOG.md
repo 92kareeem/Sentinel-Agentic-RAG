@@ -12,9 +12,13 @@ Documentation and metadata only; the server is unchanged.
 
 ### Changed
 
-- README leads with the problem, adds "use it when", install blocks for VS
-  Code and Windsurf, a comparison with other ways to check an answer from an
-  MCP agent, and a FAQ.
+- README leads with the problem, adds "use it when", a comparison with other
+  ways to check an answer from an MCP agent, and a FAQ.
+- Install section covers every client: one-click links for Cursor and VS
+  Code, `claude`/`codex`/`gemini` CLI commands, the standard `mcpServers`
+  block with a table of where it goes per client, HTTP for remote clients,
+  and framework snippets for the OpenAI Agents SDK, LangChain/LangGraph and
+  Pydantic AI, each run against this server before being written down.
 - PyPI description and keywords name the clients and the problem.
 - The README's JSON example is pinned by a test to the tool's real output.
 
