@@ -1959,7 +1959,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "sentinel-proof"
-version = "0.1.0"
+version = "0.1.2"
 source = { editable = "packages/sentinel-proof" }
 
 [package.optional-dependencies]

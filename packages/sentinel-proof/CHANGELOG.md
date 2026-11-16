@@ -6,6 +6,22 @@ All notable changes to `sentinel-proof`. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-16
+
+### Added
+
+- `Verdict.to_dict()`: a JSON-ready view of a verdict (lists, plain strings,
+  enum values). The CLI's `--json` output and the browser playground both use
+  it, so a verdict logged from any of them has the same shape.
+- Browser playground at <https://92kareeem.github.io/sentinel-rag/>: runs this
+  exact package in the browser through Pyodide; nothing leaves the page.
+
+### Changed
+
+- A sentence too short to be a claim (fewer than two words, e.g. `Fee 5% [1].`)
+  is still stripped, but its text is now kept in `Claim.text` so the row is
+  readable in reports. Verdicts are unchanged.
+
 ## [0.1.1] - 2026-11-15
 
 Documentation and packaging metadata only; no change to verification behaviour.

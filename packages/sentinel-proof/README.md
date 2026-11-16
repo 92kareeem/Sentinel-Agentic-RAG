@@ -22,6 +22,10 @@ retriever.
 pip install sentinel-proof
 ```
 
+Or **[try it in your browser](https://92kareeem.github.io/sentinel-rag/)** first:
+the same package runs in the page through Pyodide, and nothing you paste is
+uploaded.
+
 **Use it when:**
 
 - your RAG chatbot or document assistant **makes up numbers**: prices, dates,
