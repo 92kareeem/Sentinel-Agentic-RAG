@@ -1,0 +1,80 @@
+[project]
+name = "sentinel-proof-mcp"
+version = "0.1.0"
+description = "MCP server that checks an LLM answer against its sources: every number and citation verified, wrong citations fixed, unsupported claims removed. Local, no API key, no model."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "rag",
+    "hallucination",
+    "hallucination-detection",
+    "guardrails",
+    "grounding",
+    "citations",
+    "fact-checking",
+    "claude",
+    "cursor",
+    "agents",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    "sentinel-proof>=0.1.2",
+    "mcp>=2.3,<3",
+    "typing-extensions>=4.6",
+]
+
+[project.urls]
+Homepage = "https://github.com/92kareeem/sentinel-rag"
+Documentation = "https://github.com/92kareeem/sentinel-rag/tree/main/packages/sentinel-proof-mcp"
+Changelog = "https://github.com/92kareeem/sentinel-rag/blob/main/packages/sentinel-proof-mcp/CHANGELOG.md"
+Issues = "https://github.com/92kareeem/sentinel-rag/issues"
+Playground = "https://92kareeem.github.io/sentinel-rag/"
+
+[project.scripts]
+sentinel-proof-mcp = "sentinel_proof_mcp.__main__:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.8", "mypy>=1.13"]
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+sentinel_proof_mcp = ["py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+strict = true
+python_version = "3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

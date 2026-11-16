@@ -11,6 +11,8 @@ Use it when a RAG chatbot or document assistant makes up numbers, cites the wron
 - Adapters: `from_langchain(documents)`, `from_llamaindex(nodes)`, `passages_from_texts(strings)`
 - CLI: `sentinel-proof check --passages passages.json --answer answer.txt --numeric [--json]`, exit code 0 when verified
 - Limits: lexical overlap and numbers, not semantic entailment; English content words
+- MCP server: `uvx sentinel-proof-mcp` (package `sentinel-proof-mcp`, registry name `io.github.92kareeem/sentinel-proof`) exposes one tool, `verify_answer(answer, passages, question?, citation_style?, max_stripped_ratio?)`, for Claude Desktop, Claude Code, Cursor and any MCP client
+- Browser playground: https://92kareeem.github.io/sentinel-rag/ (runs the package in Pyodide; nothing uploaded)
 
 Links:
 

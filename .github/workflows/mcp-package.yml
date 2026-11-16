@@ -1,0 +1,155 @@
+name: sentinel-proof-mcp
+
+# The MCP server package. Tested against the in-repo sentinel-proof on every
+# Python it supports; published by tag `sentinel-proof-mcp-v*` to PyPI with
+# trusted publishing, then listed in the official MCP registry with GitHub
+# OIDC (no token stored anywhere).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/sentinel-proof-mcp/**"
+      - "packages/sentinel-proof/**"
+      - ".github/workflows/mcp-package.yml"
+    tags: ["sentinel-proof-mcp-v*"]
+  pull_request:
+    paths:
+      - "packages/sentinel-proof-mcp/**"
+      - "packages/sentinel-proof/**"
+      - ".github/workflows/mcp-package.yml"
+
+defaults:
+  run:
+    working-directory: packages/sentinel-proof-mcp
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ../sentinel-proof -e ".[dev]"
+      - run: ruff check . && ruff format --check .
+      - run: mypy src
+      - run: pytest -q
+      - name: The command starts and answers --version
+        run: sentinel-proof-mcp --version
+
+  build:
+    name: Build distributions
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - name: The wheel installs into a clean environment and runs over stdio
+        run: |
+          python -m venv /tmp/clean && /tmp/clean/bin/pip install -q dist/*.whl
+          /tmp/clean/bin/sentinel-proof-mcp --version
+          /tmp/clean/bin/python - <<'PY'
+          import asyncio, shutil
+          from mcp import Client, StdioServerParameters
+          async def main():
+              async with Client(StdioServerParameters(command="/tmp/clean/bin/sentinel-proof-mcp")) as c:
+                  r = await c.call_tool("verify_answer", {"answer": "Refunds within 30 days [1].", "passages": ["Refunds are allowed within 30 days."]})
+                  assert not r.is_error and r.structured_content["ok"], r
+                  print("stdio ok:", r.structured_content["summary"])
+          asyncio.run(main())
+          PY
+      - name: The registry manifest matches the package
+        run: |
+          python - <<'PY'
+          import json, re, pathlib
+          sj = json.load(open("server.json"))
+          version = re.search(r'^version = "([^"]+)"', pathlib.Path("pyproject.toml").read_text(), re.M).group(1)
+          assert sj["version"] == version == sj["packages"][0]["version"], (sj["version"], version)
+          assert sj["packages"][0]["identifier"] == "sentinel-proof-mcp"
+          marker = f"mcp-name: {sj['name']}"
+          assert marker in pathlib.Path("README.md").read_text(), f"README lacks '{marker}'"
+          print("server.json consistent:", sj["name"], version)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-proof-mcp-dist
+          path: packages/sentinel-proof-mcp/dist/
+
+  publish:
+    name: Publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/sentinel-proof-mcp-v')
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/sentinel-proof-mcp/
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: sentinel-proof-mcp-dist
+          path: packages/sentinel-proof-mcp/dist/
+      - name: Tag and package versions must agree
+        run: |
+          tag="${GITHUB_REF#refs/tags/sentinel-proof-mcp-v}"
+          version="$(python -c "import re,pathlib;print(re.search(r'^version = \"([^\"]+)\"', pathlib.Path('pyproject.toml').read_text(), re.M).group(1))")"
+          test "$tag" = "$version" || { echo "tag $tag != pyproject version $version"; exit 1; }
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/sentinel-proof-mcp/dist/
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --title "sentinel-proof-mcp ${GITHUB_REF_NAME#sentinel-proof-mcp-v}" --notes-file CHANGELOG.md
+
+  registry:
+    name: List in the MCP registry
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      MCP_PUBLISHER_VERSION: v1.8.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for PyPI to serve the new version
+        run: |
+          version="$(python -c "import json;print(json.load(open('server.json'))['version'])")"
+          for i in $(seq 1 30); do
+            if curl -fsS "https://pypi.org/pypi/sentinel-proof-mcp/$version/json" >/dev/null; then echo "pypi has $version"; exit 0; fi
+            sleep 10
+          done
+          echo "PyPI never served $version"; exit 1
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Download and verify mcp-publisher
+        run: |
+          set -euo pipefail
+          archive="mcp-publisher_linux_amd64.tar.gz"
+          base_url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+          curl --fail --location --silent --show-error --output "$archive" "$base_url/$archive"
+          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base_url/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/${MCP_PUBLISHER_VERSION}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$archive"
+          tar xzf "$archive" mcp-publisher
+          rm -f "$archive" "$archive.sigstore.json"
+      - run: ./mcp-publisher validate
+      - run: ./mcp-publisher login github-oidc
+      - run: ./mcp-publisher publish
