@@ -6,7 +6,7 @@ returns the verdict plus the text that is safe to show. Local, no API key,
 no model.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 from .server import SERVER_NAME, build_server  # noqa: E402  (needs __version__)
 

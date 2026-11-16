@@ -3,6 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/sentinel-proof-mcp.svg)](https://pypi.org/project/sentinel-proof-mcp/)
 [![Python](https://img.shields.io/pypi/pyversions/sentinel-proof-mcp.svg)](https://pypi.org/project/sentinel-proof-mcp/)
 [![MCP registry](https://img.shields.io/badge/MCP%20registry-io.github.92kareeem%2Fsentinel--proof-6f42c1.svg)](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.92kareeem/sentinel-proof)
+[![Framework compatibility](https://github.com/92kareeem/sentinel-rag/actions/workflows/mcp-compat.yml/badge.svg)](https://github.com/92kareeem/sentinel-rag/actions/workflows/mcp-compat.yml)
 [![No API key](https://img.shields.io/badge/API%20key-none-brightgreen.svg)](#faq)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/92kareeem/sentinel-rag/blob/main/packages/sentinel-proof-mcp/LICENSE)
 
@@ -43,20 +44,28 @@ first; nothing you paste is uploaded.
 - you want it **inside the agent loop**, so the model fixes its own answer
   before replying, instead of a dashboard that tells you afterwards.
 
-## Install
+## Install: works with every MCP client
 
-You need [`uv`](https://docs.astral.sh/uv/) (`pipx` works too). Every client
-below launches the server on demand with `uvx sentinel-proof-mcp`; there is
-nothing else to install or configure.
+MCP is an open protocol, and this server is a plain stdio process, so it is
+not tied to Claude or to any model. Any client or agent framework that can
+launch an MCP server can use it, with any LLM behind it. One prerequisite:
+[`uv`](https://docs.astral.sh/uv/) (`pipx` works too). Every client below then
+launches the server on demand with `uvx sentinel-proof-mcp`; nothing else to
+install.
 
-**Claude Code**
+[![Install in Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=sentinel-proof&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyJzZW50aW5lbC1wcm9vZi1tY3AiXX0=)
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_sentinel--proof-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=sentinel-proof&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22sentinel-proof-mcp%22%5D%7D)
+
+**One command**, for clients with a CLI:
 
 ```bash
-claude mcp add --scope user sentinel-proof -- uvx sentinel-proof-mcp
+claude mcp add --scope user sentinel-proof -- uvx sentinel-proof-mcp   # Claude Code
+codex mcp add sentinel-proof -- uvx sentinel-proof-mcp                 # OpenAI Codex CLI
+gemini mcp add sentinel-proof uvx sentinel-proof-mcp                   # Gemini CLI
 ```
 
-**Claude Desktop**: `Settings → Developer → Edit Config`, then add to
-`claude_desktop_config.json`:
+**One JSON block**, for clients with a config file. This is the standard
+`mcpServers` shape:
 
 ```json
 {
@@ -69,30 +78,76 @@ claude mcp add --scope user sentinel-proof -- uvx sentinel-proof-mcp
 }
 ```
 
-**Cursor**: the same block in `.cursor/mcp.json` (project) or
-`~/.cursor/mcp.json` (global).
+| Client | Where the block goes |
+|---|---|
+| Claude Desktop | `claude_desktop_config.json` (`Settings → Developer → Edit Config`) |
+| Cursor | `.cursor/mcp.json` in the project, or `~/.cursor/mcp.json` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` |
+| Cline, Roo Code | the MCP settings file the extension opens from its MCP panel |
+| LM Studio | `mcp.json` (`Program → Install → Edit mcp.json`) |
+| ChatGPT desktop, Goose, Continue, Zed, JetBrains AI, Kiro, OpenCode, Warp | the same `command` and `args`; see each client's MCP settings for the file |
+| VS Code (Copilot agent mode) | `.vscode/mcp.json`, with the top-level key `servers` instead of `mcpServers` |
 
-**Windsurf**: the same block in `~/.codeium/windsurf/mcp_config.json`.
+**Over HTTP**, for clients that connect to a URL rather than launching a
+process (and for Docker, a shared dev box, or an agent running elsewhere):
 
-**VS Code** (Copilot agent mode): in `.vscode/mcp.json` the key is `servers`:
-
-```json
-{
-  "servers": {
-    "sentinel-proof": {
-      "command": "uvx",
-      "args": ["sentinel-proof-mcp"]
-    }
-  }
-}
+```bash
+uvx sentinel-proof-mcp --transport streamable-http --host 0.0.0.0 --port 8765
+# clients connect to http://<host>:8765/mcp
 ```
 
-**Any other client**: the command is `uvx sentinel-proof-mcp` over stdio. For
-HTTP, `uvx sentinel-proof-mcp --transport streamable-http --port 8765` serves
-`http://127.0.0.1:8765/mcp`.
+**From Python**, if you would rather manage the environment yourself:
+`pip install sentinel-proof-mcp`, then the command is `sentinel-proof-mcp`
+(or `python -m sentinel_proof_mcp`).
 
-**Python**, if you would rather run it from an environment you manage:
-`pip install sentinel-proof-mcp`, then the command is `sentinel-proof-mcp`.
+**Windows note**: if a desktop client cannot find `uvx`, put the full path in
+`command` (`where uvx` prints it) or set `uv`'s install directory on `PATH`
+for GUI apps.
+
+### From an agent framework
+
+The server works with any LLM provider, because the framework, not the
+server, talks to the model. These are run nightly in CI against the latest release of each framework:
+
+**OpenAI Agents SDK**
+
+```python
+from agents import Agent, Runner
+from agents.mcp import MCPServerStdio
+
+async with MCPServerStdio(name="sentinel-proof", params={"command": "uvx", "args": ["sentinel-proof-mcp"]}) as proof:
+    agent = Agent(name="docs-qa", instructions="Answer from the passages, cite [n], then verify_answer before replying.", mcp_servers=[proof])
+    result = await Runner.run(agent, "What is the refund policy?")
+```
+
+**LangChain / LangGraph**
+
+```python
+from langchain_mcp_adapters.client import MultiServerMCPClient
+
+client = MultiServerMCPClient({
+    "sentinel-proof": {"command": "uvx", "args": ["sentinel-proof-mcp"], "transport": "stdio"},
+})
+tools = await client.get_tools()   # [verify_answer], ready for create_agent / bind_tools
+```
+
+`langchain-mcp-adapters` pins the `mcp` package below 2.0 and this server
+needs 2.x. That is why the examples launch it with `uvx`, which gives it its
+own environment; the two versions talk over the wire without issue.
+
+**Pydantic AI**
+
+```python
+from fastmcp.client.transports import StdioTransport
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPToolset
+
+proof = MCPToolset(StdioTransport(command="uvx", args=["sentinel-proof-mcp"]))
+agent = Agent("<provider>:<model>", toolsets=[proof])   # any provider Pydantic AI supports
+```
+
+Google ADK, LlamaIndex, CrewAI, AutoGen, Semantic Kernel, Mastra, Vercel AI
+SDK and n8n all have an MCP client that takes the same `command` and `args`.
 
 ## What the agent gets
 
@@ -174,11 +229,13 @@ behind it. It is the deterministic floor, not the ceiling.
 a local process over stdio, the check is pure Python with no dependencies, and
 it makes no network calls. The passages and the answer stay in the process.
 
-**Which clients does it work with?** Any MCP client. It speaks stdio, the
-transport Claude Code, Claude Desktop, Cursor, VS Code and Windsurf use to
-launch local servers, and the test suite drives it that way as a real
-subprocess. Agent frameworks that speak MCP (the OpenAI Agents SDK, LangGraph,
-Pydantic AI, Semantic Kernel, n8n) can mount it the same way.
+**Which clients and models does it work with?** Any MCP client, with any
+model. The server never talks to an LLM; the client does. It speaks stdio,
+the transport every desktop client and CLI uses to launch local servers, and
+streamable HTTP for the rest. The test suite drives it over stdio as a real
+subprocess, and the framework examples above were run against this release
+with the OpenAI Agents SDK, LangChain (on the older `mcp` 1.x) and Pydantic
+AI.
 
 **How is this different from asking Claude to double-check its answer?** The
 model checking itself is another model call: it costs tokens, takes seconds,
@@ -227,7 +284,13 @@ the design decision are in the
 pip install -e ../sentinel-proof -e ".[dev]"
 pytest -q            # in-process through the MCP client, plus one real stdio subprocess
 ruff check . && mypy src
+python compat/check_openai_agents.py   # launch the installed server from a framework's MCP client
 ```
+
+`compat/` holds one check per agent framework. A
+[nightly workflow](https://github.com/92kareeem/sentinel-rag/actions/workflows/mcp-compat.yml)
+runs them against the latest release of each framework and of this package,
+plus the official MCP Inspector, so the client list above stays true.
 
 ## License
 

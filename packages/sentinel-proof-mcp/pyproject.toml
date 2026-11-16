@@ -1,6 +1,6 @@
 [project]
 name = "sentinel-proof-mcp"
-version = "0.1.1"
+version = "0.1.2"
 description = "MCP server that fact-checks an LLM answer against its source passages before the user sees it: every number and citation verified, wrong citations fixed, unsupported sentences removed. Local, deterministic, no API key, no model. For Claude Desktop, Claude Code, Cursor, VS Code and any MCP client."
 readme = "README.md"
 requires-python = ">=3.10"

@@ -1,0 +1,72 @@
+name: sentinel-proof-mcp compatibility
+
+# Does the released server still work from the agent frameworks the README
+# promises? Nightly, against the latest release of each framework and the
+# latest sentinel-proof-mcp on PyPI, installed the way a user installs it
+# (uv tool). A framework renaming its MCP client fails this build instead of
+# a user's agent. Also runs on pull requests that touch the checks themselves.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "packages/sentinel-proof-mcp/compat/**"
+      - ".github/workflows/mcp-compat.yml"
+
+defaults:
+  run:
+    working-directory: packages/sentinel-proof-mcp
+
+jobs:
+  frameworks:
+    name: ${{ matrix.framework }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - framework: openai-agents
+            install: openai-agents
+            script: check_openai_agents.py
+          - framework: pydantic-ai
+            install: "pydantic-ai-slim[mcp]"
+            script: check_pydantic_ai.py
+          - framework: langchain
+            install: langchain-mcp-adapters
+            script: check_langchain.py
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install the released server the way users do
+        run: |
+          uv tool install sentinel-proof-mcp
+          sentinel-proof-mcp --version
+      - name: Install the latest ${{ matrix.framework }} in its own environment
+        run: |
+          uv venv .fw
+          uv pip install --python .fw/bin/python "${{ matrix.install }}"
+          .fw/bin/python -c "import importlib.metadata as m; print('mcp', m.version('mcp'))"
+      - name: Launch the server from ${{ matrix.framework }} and verify an answer
+        run: .fw/bin/python compat/${{ matrix.script }} "$(command -v sentinel-proof-mcp)"
+
+  clients:
+    name: MCP Inspector (reference client)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: uv tool install sentinel-proof-mcp
+      - name: List tools and call verify_answer through the official inspector CLI
+        run: |
+          npx --yes @modelcontextprotocol/inspector --cli sentinel-proof-mcp --method tools/list | tee tools.json
+          grep -q '"verify_answer"' tools.json
+          npx --yes @modelcontextprotocol/inspector --cli sentinel-proof-mcp --method tools/call \
+            --tool-name verify_answer \
+            --tool-arg 'answer=Refunds within 30 days [1].' \
+            --tool-arg 'passages=["Refunds are allowed within 30 days."]' | tee call.json
+          grep -q 'Verified: 1 of 1 claims supported' call.json
