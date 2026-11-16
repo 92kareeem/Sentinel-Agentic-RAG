@@ -16,7 +16,6 @@ import dataclasses
 import json
 import sys
 from pathlib import Path
-from typing import Any
 
 from . import __version__
 from .grounding import MAX_STRIPPED_RATIO, Verdict, verify
@@ -40,16 +39,6 @@ def _load_passages(path: Path) -> list[Passage]:
         extra = {k: v for k, v in x.items() if k not in fields and k != "metadata"}
         out.append(Passage(**known, metadata={**x.get("metadata", {}), **extra}))
     return _with_ids(out)
-
-
-def _as_dict(v: Verdict) -> dict[str, Any]:
-    d = dataclasses.asdict(v)
-    d["refusal"] = v.refusal.value if v.refusal else None
-    d["passed"] = v.passed
-    d["safe_text"] = v.safe_text()
-    for c in d["claims"]:
-        c["status"] = str(c["status"])
-    return d
 
 
 def _print_human(v: Verdict) -> None:
@@ -107,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
         max_stripped_ratio=args.max_stripped,
     )
     if args.json:
-        print(json.dumps(_as_dict(verdict), indent=2))
+        print(json.dumps(verdict.to_dict(), indent=2))
     else:
         _print_human(verdict)
     return 0 if verdict.passed else 1

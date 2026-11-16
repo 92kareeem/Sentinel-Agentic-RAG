@@ -1,0 +1,60 @@
+name: playground
+
+# The browser playground at https://92kareeem.github.io/sentinel-rag/ runs the
+# sentinel-proof wheel built from this checkout inside Pyodide. Every pull
+# request that touches it is built and exercised in a real browser; main is
+# deployed to GitHub Pages.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "playground/**"
+      - "packages/sentinel-proof/**"
+      - ".github/workflows/pages.yml"
+  pull_request:
+    paths:
+      - "playground/**"
+      - "packages/sentinel-proof/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test in a browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build playwright==1.49.1
+      - run: python playground/build.py
+      - run: playwright install --with-deps chromium
+      - name: The page loads the wheel and verifies every example
+        run: python playground/test_playground.py
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: playground/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

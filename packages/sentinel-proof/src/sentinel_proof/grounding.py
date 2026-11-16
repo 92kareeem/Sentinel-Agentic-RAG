@@ -27,8 +27,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum
+from typing import Any
 
 from .citations import (
     CITATION_RE,
@@ -179,6 +180,30 @@ class Verdict:
         if self.passed:
             return self.answer
         return refusal_text(self.refusal or RefusalReason.UNVERIFIABLE_ANSWER)
+
+    def to_dict(self) -> dict[str, Any]:
+        """A JSON-ready view of the verdict: plain strings, lists and numbers.
+
+        The same shape the CLI prints with ``--json`` and the playground
+        renders, so a verdict logged from any of them reads the same.
+        """
+        d = asdict(self, dict_factory=_json_dict)
+        d["refusal"] = self.refusal.value if self.refusal else None
+        d["passed"] = self.passed
+        d["safe_text"] = self.safe_text()
+        return d
+
+
+def _json_dict(items: list[tuple[str, Any]]) -> dict[str, Any]:
+    """``asdict`` factory: tuples become lists and enums their values."""
+    out: dict[str, Any] = {}
+    for k, v in items:
+        if isinstance(v, tuple):
+            v = list(v)
+        elif isinstance(v, Enum):
+            v = v.value
+        out[k] = v
+    return out
 
 
 @dataclass
@@ -399,7 +424,7 @@ def verify(
         if not sentences:
             total += 1
             stripped += 1  # degenerate: tags with nothing to stand behind
-            claims.append(Claim("", ClaimStatus.STRIPPED, tuple(tag_ids), ()))
+            claims.append(Claim(prose.strip(" .,;:\n\t"), ClaimStatus.STRIPPED, tuple(tag_ids), ()))
             continue
 
         for raw in sentences:

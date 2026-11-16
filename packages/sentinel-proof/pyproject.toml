@@ -1,6 +1,6 @@
 [project]
 name = "sentinel-proof"
-version = "0.1.1"
+version = "0.1.2"
 description = "Catch RAG hallucinations without an LLM judge: check every number and citation in an LLM answer against the retrieved context, fix wrong citations, strip unsupported claims, and refuse what cannot be grounded."
 readme = "README.md"
 requires-python = ">=3.10"

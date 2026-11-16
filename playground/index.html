@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sentinel-proof playground: check a RAG answer against its sources</title>
+  <meta name="description" content="Paste the passages your retriever returned and the answer your LLM wrote. See which sentences are supported, which citations were wrong and got re-pointed, and which claims were stripped because their numbers are not in the evidence. Runs entirely in your browser; nothing is uploaded.">
+  <meta property="og:title" content="sentinel-proof playground">
+  <meta property="og:description" content="Catch RAG hallucinations in the browser: every number and citation checked against the retrieved passages, with no model and no upload.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f6f5f'/%3E%3Cpath d='M9 17l5 5 9-11' fill='none' stroke='%23fff' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <div>
+        <h1>sentinel-proof <span class="muted">playground</span></h1>
+        <p class="tagline">Check a RAG answer against the passages it cites. No model, no upload: the real <code>sentinel-proof</code> package runs in your browser.</p>
+      </div>
+    </div>
+    <nav class="links">
+      <a href="https://pypi.org/project/sentinel-proof/" rel="noopener">PyPI</a>
+      <a href="https://github.com/92kareeem/sentinel-rag/tree/main/packages/sentinel-proof" rel="noopener">GitHub</a>
+      <a href="https://github.com/92kareeem/sentinel-rag/blob/main/packages/sentinel-proof/README.md#faq" rel="noopener">FAQ</a>
+    </nav>
+  </header>
+
+  <div id="status" class="status" role="status" aria-live="polite">Loading the Python runtime (about 10 MB on the first visit, cached afterwards)…</div>
+
+  <main class="grid">
+    <section class="inputs" aria-label="Inputs">
+      <div class="toolbar">
+        <label class="field-label" for="preset">Example</label>
+        <select id="preset" aria-label="Load an example">
+          <option value="">Choose an example…</option>
+        </select>
+        <span class="spacer"></span>
+        <button id="share" type="button" class="secondary" title="Copy a link that reproduces this exact case">Copy share link</button>
+      </div>
+
+      <label class="field-label" for="passages">Retrieved passages <span class="hint" id="passages-hint">one per paragraph, separated by a blank line; cite as [1], [2]…</span></label>
+      <textarea id="passages" spellcheck="false" rows="9" placeholder="Paste what your retriever returned. Separate passages with a blank line."></textarea>
+
+      <label class="field-label" for="answer">LLM answer <span class="hint">with the citations the model wrote</span></label>
+      <textarea id="answer" spellcheck="false" rows="6" placeholder="Paste the model's answer, citations included."></textarea>
+
+      <label class="field-label" for="question">Question <span class="hint">optional; numbers the user typed are not counted as fabrications</span></label>
+      <input id="question" type="text" autocomplete="off" placeholder="What the user asked">
+
+      <div class="options">
+        <label>Citation style
+          <select id="style">
+            <option value="numeric">numeric: [1], [2, 3]</option>
+            <option value="tag">tag: [chunk:p1]</option>
+          </select>
+        </label>
+        <label>Refuse when more than
+          <input id="max" type="number" min="0" max="1" step="0.05" value="0.5"> of the claims are stripped
+        </label>
+      </div>
+    </section>
+
+    <section class="output" aria-label="Verdict">
+      <div id="verdict" class="verdict pending">
+        <div class="verdict-head">
+          <span id="verdict-label" class="verdict-label">Waiting for input</span>
+          <span id="verdict-stats" class="verdict-stats"></span>
+        </div>
+        <p id="verdict-note" class="verdict-note">Paste passages and an answer, or pick an example.</p>
+      </div>
+
+      <h2 class="section-title">Claims <span class="hint">what the gate decided, sentence by sentence</span></h2>
+      <ol id="claims" class="claims"></ol>
+
+      <h2 class="section-title">What would reach the user</h2>
+      <div id="safe-text" class="safe-text"></div>
+
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" class="tab active" data-tab="json" aria-selected="true">Verdict JSON</button>
+        <button type="button" role="tab" class="tab" data-tab="code" aria-selected="false">Reproduce in Python</button>
+        <span class="spacer"></span>
+        <button id="copy-tab" type="button" class="secondary small">Copy</button>
+      </div>
+      <pre id="json" class="panel" data-panel="json"></pre>
+      <pre id="code" class="panel hidden" data-panel="code"></pre>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>Everything runs in this tab through <a href="https://pyodide.org" rel="noopener">Pyodide</a>; your text never leaves the browser. The playground installs the same wheel that is published to PyPI, so a result here is the result <code>pip install sentinel-proof</code> gives. The gate checks numbers and word overlap, not meaning: pair it with a judge model for paraphrase. <a href="https://github.com/92kareeem/sentinel-rag/issues/new?template=gate_wrong_verdict.yml" rel="noopener">Got a wrong verdict? Report it</a> and it becomes a test.</p>
+    <p class="muted" id="version"></p>
+  </footer>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

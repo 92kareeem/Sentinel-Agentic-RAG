@@ -332,3 +332,38 @@ def test_the_threshold_is_adjustable() -> None:
 def test_passages_without_ids_get_positional_ones() -> None:
     v = verify("Refunds take 3 days [chunk:p1].", [Passage(text=CHUNKS[0].text)])
     assert v.ok and v.cited_ids == ("p1",)
+
+
+def test_to_dict_is_json_ready_and_matches_the_verdict() -> None:
+    import json
+
+    from sentinel_proof import passages_from_texts
+
+    passages = passages_from_texts(["Refunds are allowed within 30 days."])
+    v = verify(
+        "Refunds are allowed within 30 days [1]. Fees are 5% [1].",
+        passages,
+        citation_style="numeric",
+    )
+    d = v.to_dict()
+    json.dumps(d)  # must not raise
+    assert d["ok"] is v.ok and d["passed"] is v.passed
+    assert d["answer"] == v.answer and d["safe_text"] == v.safe_text()
+    assert d["refusal"] is None
+    assert [c["status"] for c in d["claims"]] == ["supported", "stripped"]
+    assert d["claims"][1]["unsupported_numbers"] == ["5"]
+
+    refused = verify("Fees are 5% [1]. Tax is 9% [1].", passages, citation_style="numeric")
+    assert refused.to_dict()["refusal"] == "UNVERIFIABLE_ANSWER"
+
+
+def test_degenerate_claim_keeps_its_prose_for_diagnosis() -> None:
+    from sentinel_proof import passages_from_texts
+
+    passages = passages_from_texts(["Refunds are allowed within 30 days."])
+    v = verify(
+        "Refunds are allowed within 30 days [1]. Fee 5% [1].", passages, citation_style="numeric"
+    )
+    assert [c.status for c in v.claims] == [ClaimStatus.SUPPORTED, ClaimStatus.STRIPPED]
+    assert v.claims[1].text == "Fee 5%"
+    assert v.answer == "Refunds are allowed within 30 days [1]."

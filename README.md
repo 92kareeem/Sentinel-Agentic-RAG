@@ -21,7 +21,7 @@ Every sentence it ships is cited and checked against the passage it cites. What 
 > `pip install sentinel-proof`, no dependencies, no model calls. It checks every number and
 > citation in an LLM answer against the retrieved passages, re-points wrong citations,
 > strips unsupported claims and refuses what can't be grounded. Works with LangChain,
-> LlamaIndex or any retriever.
+> LlamaIndex or any retriever. **[Try it in your browser](https://92kareeem.github.io/sentinel-rag/)**: nothing is uploaded.
 
 ---
 
@@ -314,6 +314,7 @@ Stated plainly, because a system whose guarantees are precisely scoped is more t
 
 ```
 packages/sentinel-proof/  the grounding gate as a standalone Apache-2.0 package (pip install sentinel-proof)
+playground/               browser playground for that package (GitHub Pages, Pyodide; nothing uploaded)
 backend/app/agents/        LangGraph nodes and routing (graph.py is the whole state machine)
 backend/app/guardrails/    auth, access, injection, PII, quota, cost governor, grounding (adapter over the package)
 backend/app/llm/           provider adapters over one resilient HTTP core, pricing
